@@ -1,0 +1,56 @@
+# HappyHeadlines — cache layers between services and the distant global databases.
+# DLS Compulsory Assignment #1 (W40). Week 1 foundation: architecture + topology.
+
+services:
+  # --- Global databases (source of truth, North America) ---
+  article-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: articles
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports:
+      - "5433:5432"
+
+  comment-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: comments
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports:
+      - "5434:5432"
+
+  # --- The two cache layers (Redis) ---
+  article-cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  comment-cache:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+  # --- Region-replicated services (stubs for now) ---
+  article-service:
+    build: ./server/article-service
+    ports:
+      - "4001:4001"
+    depends_on:
+      - article-cache
+      - article-db
+    environment:
+      ARTICLE_CACHE_HOST: article-cache
+      ARTICLE_DB_HOST: article-db
+
+  comment-service:
+    build: ./server/comment-service
+    ports:
+      - "4002:4002"
+    depends_on:
+      - comment-cache
+      - comment-db
+    environment:
+      COMMENT_CACHE_HOST: comment-cache
+      COMMENT_DB_HOST: comment-db
