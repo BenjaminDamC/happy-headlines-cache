@@ -1,16 +1,17 @@
-# HappyHeadlines — cache layers between services and the distant global databases.
-# DLS Compulsory Assignment #1 (W40). Week 1 foundation: architecture + topology.
+# HappyHeadlines — cache layers between the region-replicated services and the
+# distant global databases. DLS Compulsory Assignment #1 (W40).
 
 services:
-  # --- Global databases (source of truth, North America) ---
+  # --- Global databases (in North America; NOT replicated to regions) ---
   article-db:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: articles
       POSTGRES_USER: hh
       POSTGRES_PASSWORD: hh
-    ports:
-      - "5433:5432"
+    ports: ["5433:5432"]
+    volumes:
+      - ./db/init-article.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
   comment-db:
     image: postgres:16-alpine
@@ -18,39 +19,43 @@ services:
       POSTGRES_DB: comments
       POSTGRES_USER: hh
       POSTGRES_PASSWORD: hh
-    ports:
-      - "5434:5432"
+    ports: ["5434:5432"]
+    volumes:
+      - ./db/init-comment.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
-  # --- The two cache layers (Redis) ---
+  # --- Cache layers ---
   article-cache:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    ports: ["6379:6379"]
 
   comment-cache:
     image: redis:7-alpine
-    ports:
-      - "6380:6379"
+    ports: ["6380:6379"]
 
-  # --- Region-replicated services (stubs for now) ---
+  # --- Services (replicated per region; talk to the distant DBs via the caches) ---
   article-service:
     build: ./server/article-service
-    ports:
-      - "4001:4001"
-    depends_on:
-      - article-cache
-      - article-db
+    ports: ["4001:4001"]
+    depends_on: [article-cache, article-db]
     environment:
-      ARTICLE_CACHE_HOST: article-cache
-      ARTICLE_DB_HOST: article-db
+      REDIS_URL: redis://article-cache:6379
+      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+
+  # The ArticleCache OFFLINE fill process — periodically copies the latest
+  # 14 days of articles into Redis. Runs independently of the service.
+  article-fill:
+    build: ./server/article-service
+    command: ["node", "fill-cache.js"]
+    depends_on: [article-cache, article-db]
+    environment:
+      REDIS_URL: redis://article-cache:6379
+      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+      FILL_INTERVAL_MS: 30000
 
   comment-service:
     build: ./server/comment-service
-    ports:
-      - "4002:4002"
-    depends_on:
-      - comment-cache
-      - comment-db
+    ports: ["4002:4002"]
+    depends_on: [comment-cache, comment-db]
     environment:
-      COMMENT_CACHE_HOST: comment-cache
-      COMMENT_DB_HOST: comment-db
+      REDIS_URL: redis://comment-cache:6379
+      DATABASE_URL: postgres://hh:hh@comment-db:5432/comments

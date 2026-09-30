@@ -1,28 +1,68 @@
-// ArticleService — stub for the W40 cache-layer assignment (week-1 scope).
-// The cache integration is deliberately left as a TODO for a later week; this
-// stub exists so the Docker Compose topology is runnable end-to-end.
-const http = require('node:http');
+// ArticleService — reads articles through the ArticleCache (Redis).
+// The cache is filled OFFLINE (see fill-cache.js), never on-demand: this service
+// only reads Redis and falls back to the database on a miss (e.g. an article
+// outside the 14-day window).
+import http from 'node:http';
+import { createClient } from 'redis';
+import pg from 'pg';
 
-const PORT = process.env.PORT || 4001;
-const CACHE_HOST = process.env.ARTICLE_CACHE_HOST || 'article-cache';
+const { Pool } = pg;
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgres://hh:hh@localhost:5432/articles';
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'article-service', cache: CACHE_HOST }));
-    return;
+const redis = createClient({ url: REDIS_URL });
+redis.on('error', (e) => console.error('[redis]', e.message));
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+async function retry(fn, label, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { await fn(); console.log(`${label} connected`); return; }
+    catch { await new Promise(r => setTimeout(r, 1000)); }
   }
-  if (req.url === '/articles') {
-    // TODO (later week): read-through the ArticleCache (Redis).
-    //  - On hit: return the cached article.
-    //  - On miss: read from ArticleDatabase, and an offline process periodically
-    //    fills the cache with articles from the latest 14 days.
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ service: 'article-service', note: 'cache integration TODO' }));
-    return;
+  throw new Error(`${label} never connected`);
+}
+
+const json = (res, code, obj) => {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+};
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/health') {
+    return json(res, 200, { status: 'ok', service: 'article-service', cache: REDIS_URL });
   }
-  res.writeHead(404);
-  res.end('not found');
+
+  if (url.pathname === '/cache/size') {
+    const keys = await redis.keys('article:*');
+    return json(res, 200, { cachedArticles: keys.length });
+  }
+
+  if (url.pathname === '/articles') {
+    const { rows } = await pool.query('SELECT id, title, published_at FROM articles ORDER BY published_at DESC');
+    const cached = new Set((await redis.keys('article:*')).map(k => k.split(':')[1]));
+    const articles = rows.map(a => ({ ...a, cached: cached.has(String(a.id)) }));
+    return json(res, 200, { articles });
+  }
+
+  const m = url.pathname.match(/^\/articles\/(\d+)$/);
+  if (m) {
+    const id = m[1];
+    const cached = await redis.get(`article:${id}`);
+    if (cached) return json(res, 200, { source: 'cache', article: JSON.parse(cached) });
+
+    const { rows } = await pool.query('SELECT id, title, content, published_at FROM articles WHERE id = $1', [id]);
+    if (!rows[0]) return json(res, 404, { error: 'not found' });
+    return json(res, 200, { source: 'db', article: rows[0] });
+  }
+
+  json(res, 404, { error: 'not found' });
 });
 
-server.listen(PORT, () => console.log(`ArticleService listening on :${PORT}`));
+async function main() {
+  await retry(() => redis.connect(), 'redis');
+  await retry(() => pool.query('SELECT 1'), 'postgres');
+  server.listen(4001, () => console.log('ArticleService listening on 4001'));
+}
+main();

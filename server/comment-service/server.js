@@ -1,29 +1,89 @@
-// CommentService — stub for the W40 cache-layer assignment (week-1 scope).
-// The cache integration is deliberately left as a TODO for a later week; this
-// stub exists so the Docker Compose topology is runnable end-to-end.
-const http = require('node:http');
+// CommentService — cache-miss with LRU eviction.
+// Reads comments through the CommentCache (Redis). On a MISS it fetches from the
+// database AND stores the result, tracking the most-recently-accessed articles in
+// a sorted set. When more than 30 articles are cached, the least-recently-used one
+// is evicted.
+import http from 'node:http';
+import { createClient } from 'redis';
+import pg from 'pg';
 
-const PORT = process.env.PORT || 4002;
-const CACHE_HOST = process.env.COMMENT_CACHE_HOST || 'comment-cache';
+const { Pool } = pg;
+const MAX_CACHED_ARTICLES = 30;
+const LRU_KEY = 'commentcache:lru';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgres://hh:hh@localhost:5432/comments';
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'comment-service', cache: CACHE_HOST }));
-    return;
+const redis = createClient({ url: REDIS_URL });
+redis.on('error', (e) => console.error('[redis]', e.message));
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+async function retry(fn, label, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try { await fn(); console.log(`${label} connected`); return; }
+    catch { await new Promise(r => setTimeout(r, 1000)); }
   }
-  if (req.url === '/comments') {
-    // TODO (later week): read-through the CommentCache (Redis), cache-miss style.
-    //  - On hit: return cached comments.
-    //  - On miss: read from CommentDatabase, store comments for this article in the
-    //    cache. The cache is limited to the 30 most recently accessed articles and
-    //    evicts the least-recently-used (LRU) when full.
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ service: 'comment-service', note: 'cache integration TODO' }));
-    return;
+  throw new Error(`${label} never connected`);
+}
+
+const json = (res, code, obj) => {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+};
+
+async function getCommentsFromDb(articleId) {
+  const { rows } = await pool.query(
+    'SELECT id, article_id, author, content, created_at FROM comments WHERE article_id = $1 ORDER BY created_at',
+    [articleId]
+  );
+  return rows;
+}
+
+async function evictIfOver() {
+  const count = await redis.zCard(LRU_KEY);
+  if (count > MAX_CACHED_ARTICLES) {
+    const oldest = await redis.zRange(LRU_KEY, 0, 0);
+    if (oldest.length) {
+      await redis.del(`comments:${oldest[0]}`);
+      await redis.zRem(LRU_KEY, oldest[0]);
+      console.log(`[lru] evicted article ${oldest[0]} (${count - 1}/${MAX_CACHED_ARTICLES} kept)`);
+    }
   }
-  res.writeHead(404);
-  res.end('not found');
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://x');
+
+  if (url.pathname === '/health') {
+    return json(res, 200, { status: 'ok', service: 'comment-service', cache: REDIS_URL });
+  }
+
+  if (url.pathname === '/cache/stats') {
+    const cachedArticles = await redis.zCard(LRU_KEY);
+    return json(res, 200, { cachedArticles, max: MAX_CACHED_ARTICLES });
+  }
+
+  const m = url.pathname.match(/^\/articles\/(\d+)\/comments$/);
+  if (m) {
+    const articleId = m[1];
+    const cached = await redis.get(`comments:${articleId}`);
+    if (cached) {
+      await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId }); // touch → becomes most-recent
+      return json(res, 200, { source: 'cache', comments: JSON.parse(cached) });
+    }
+
+    const comments = await getCommentsFromDb(articleId);
+    await redis.set(`comments:${articleId}`, JSON.stringify(comments));
+    await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId });
+    await evictIfOver();
+    return json(res, 200, { source: 'db', comments });
+  }
+
+  json(res, 404, { error: 'not found' });
 });
 
-server.listen(PORT, () => console.log(`CommentService listening on :${PORT}`));
+async function main() {
+  await retry(() => redis.connect(), 'redis');
+  await retry(() => pool.query('SELECT 1'), 'postgres');
+  server.listen(4002, () => console.log('CommentService listening on 4002'));
+}
+main();

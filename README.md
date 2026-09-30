@@ -4,9 +4,8 @@ DLS Compulsory Assignment #1 (W40): fix HappyHeadlines' availability and
 latency by putting cache layers between the region-replicated services and the
 distant global databases.
 
-This repo is the **week-1 foundation** for the assignment: the architecture
-(C4) and the container topology (Docker Compose). The cache logic and the
-hit-ratio dashboard are deliberately left for later weeks.
+Both cache layers are implemented and runnable (see [Running it](#running-it)).
+The only piece still to add is the cache hit-ratio dashboard.
 
 ## The problem
 
@@ -30,11 +29,13 @@ flowchart LR
     CS --> CDB[("CommentDatabase<br/>PostgreSQL · North America")]
 ```
 
-- **ArticleCache** — an offline process periodically fills it with articles
-  from the latest 14 days. Readers get a fast, region-local read.
-- **CommentCache** — a cache-miss strategy: on a miss it reads the database
-  and stores the comments. It is limited to the 30 most recently accessed
-  articles and evicts the least-recently-used when full.
+- **ArticleCache** — an **offline** process (`article-fill`) periodically copies
+  the latest 14 days of articles into Redis. The service only reads the cache
+  and falls back to the database for older articles.
+- **CommentCache** — a **cache-miss** strategy: on a miss the service reads the
+  database and stores the comments, tracking the most-recently-accessed
+  articles in a sorted set. When more than 30 articles are cached, the
+  least-recently-used is evicted.
 
 The full text-based C4 model (context + container levels) is in
 [`docs/architecture.dsl`](docs/architecture.dsl) — open it with Structurizr
@@ -44,9 +45,10 @@ Lite (`structurizr/lite` on port 8080) to browse it interactively.
 
 | Container | Image | Role |
 |---|---|---|
-| `article-db`, `comment-db` | `postgres:16-alpine` | global databases (North America) |
+| `article-db`, `comment-db` | `postgres:16-alpine` | global databases (North America), seeded via `db/init-*.sql` |
 | `article-cache`, `comment-cache` | `redis:7-alpine` | the two cache layers |
-| `article-service`, `comment-service` | custom Node stubs | region services (cache logic TODO) |
+| `article-service`, `comment-service` | custom Node | region services (read-through / cache-miss) |
+| `article-fill` | custom Node | the offline 14-day fill process |
 
 ## Running it
 
@@ -54,13 +56,24 @@ Lite (`structurizr/lite` on port 8080) to browse it interactively.
 docker compose up --build
 ```
 
-- ArticleService: `http://localhost:4001/health`
-- CommentService: `http://localhost:4002/health`
+Then exercise the two strategies:
+
+```bash
+# ArticleCache (offline fill)
+curl localhost:4001/cache/size            # how many articles the fill cached
+curl localhost:4001/articles/1            # recent  -> "source":"cache"
+curl localhost:4001/articles/12           # old     -> "source":"db"  (outside 14 days)
+
+# CommentCache (cache-miss + LRU)
+curl localhost:4002/articles/1/comments   # first request  -> "source":"db"
+curl localhost:4002/articles/1/comments   # second request -> "source":"cache"
+curl localhost:4002/cache/stats           # cached articles vs the 30-article cap
+```
 
 ## Scope
 
-**Done (week 1 — W35 "Foundational tools"):** the C4 model and the Docker
-Compose topology with the two cache layers wired in.
+**Done:** C4 model, Docker Compose topology, and both cache layers
+(offline 14-day fill + cache-miss LRU).
 
-**Deferred (later weeks):** the actual cache read-through / offline-fill /
-LRU logic, and the cache hit-ratio dashboard.
+**Deferred:** the cache hit-ratio dashboard (the monitoring piece of the
+assignment).
