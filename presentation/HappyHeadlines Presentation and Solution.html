@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HappyHeadlines — Cache Layers: Presentation &amp; Solution</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #1a1a1a; line-height: 1.5; font-size: 11.5px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color:#555; margin-bottom: 16px; font-size: 13px; }
+  h2 { font-size: 15px; border-bottom: 2px solid #2f5da8; padding-bottom: 3px; margin-top: 22px; color:#143a66; }
+  h3 { font-size: 12px; margin: 14px 0 4px; color:#1a1a1a; }
+  .fname { color:#888; font-weight: normal; font-size: 10px; margin-left: 6px; }
+  pre { background:#f6f8fa; border:1px solid #e1e4e8; border-radius:5px; padding:9px; font-size:8.6px; line-height:1.35; overflow-x:hidden; white-space:pre-wrap; word-break:break-word; }
+  code { font-family:"SF Mono", Menlo, Consolas, monospace; }
+  .pitch { background:#eef3fb; border-left:4px solid #2f5da8; padding:10px 12px; border-radius:4px; margin:8px 0; }
+  ul { margin:6px 0; padding-left:20px; }
+  li { margin:3px 0; }
+  .diagram { text-align:center; margin:10px 0; }
+  .cols { display:flex; gap:16px; }
+  .col { flex:1; }
+  table { border-collapse:collapse; width:100%; font-size:11px; margin:6px 0; }
+  th, td { border:1px solid #d0d7de; padding:5px 8px; text-align:left; vertical-align:top; }
+  th { background:#f0f4fa; }
+  .q { font-weight:bold; color:#143a66; }
+  .pagebreak { page-break-before: always; }
+  .small { color:#666; font-size:10px; }
+</style>
+</head>
+<body>
+
+<h1>HappyHeadlines — Cache Layers</h1>
+<div class="sub">DLS Compulsory Assignment #1 (W40) · Presentation &amp; finished solution · Repo: github.com/BenjaminDamC/happy-headlines-cache</div>
+
+<div class="pitch"><b>The 10-minute pitch in one breath:</b> HappyHeadlines' services are already
+replicated to every region, but they all read from a single database in North America, so European
+users get slow responses and occasional outages. Replicating the database was rejected on cost. So I
+put a <b>cache layer in front of each database</b>: an <b>ArticleCache</b> (offline-filled with the
+latest 14 days of articles) and a <b>CommentCache</b> (cache-miss with LRU over the 30 most recently
+accessed articles). Both are implemented, containerized with Docker Compose, and verified.</div>
+
+<h2>1 · The assignment</h2>
+<ul>
+  <li>Fix HappyHeadlines' availability + latency by adding two cache layers.</li>
+  <li><b>ArticleCache</b> — between ArticleService and ArticleDatabase; an <i>offline</i> process periodically fills it with articles from the latest 14 days.</li>
+  <li><b>CommentCache</b> — between CommentService and CommentDatabase; <i>cache-miss</i> fill, limited to the 30 most recently accessed articles, LRU eviction.</li>
+  <li>A small <b>dashboard</b> showing each cache's hit ratio (the remaining piece).</li>
+  <li>Present on Zoom, ≤10 min, screen sharing, webcam on, individual pass/fail.</li>
+</ul>
+
+<h2>2 · The problem</h2>
+<p>The <code>ArticleService</code> and <code>CommentService</code> are already replicated to each region, but
+they all talk to a single global database instance in North America. European users see slow responses;
+some articles become unavailable. Replicating the database (an x-axis split) was rejected on cost, so the
+ARB approved <b>cache layers</b> in front of each database instead.</p>
+
+<h2>3 · Architecture</h2>
+<div class="diagram"><svg viewBox="0 0 820 540" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill:#eef3fb; stroke:#2f5da8; stroke-width:1.5; rx:6; }
+    .cache { fill:#fff4e0; stroke:#b57b00; }
+    .db { fill:#e9f5ec; stroke:#2e7d4f; }
+    .t { fill:#1a1a1a; font-size:14px; font-weight:bold; }
+    .s { fill:#444; font-size:11px; }
+    .tag { font-size:10px; fill:#666; }
+    .l { stroke:#555; stroke-width:1.3; marker-end:url(#arw); fill:none; }
+  </style>
+
+  <!-- Web App -->
+  <rect class="box" x="300" y="20" width="220" height="50"/>
+  <text class="t" x="410" y="42" text-anchor="middle">Web App</text>
+  <text class="s" x="410" y="60" text-anchor="middle">React SPA</text>
+
+  <!-- arrows from Web -->
+  <path class="l" d="M 365 70 L 235 128"/>
+  <path class="l" d="M 455 70 L 585 128"/>
+
+  <!-- Left column: Article -->
+  <rect class="box" x="140" y="130" width="190" height="52"/>
+  <text class="t" x="235" y="152" text-anchor="middle">ArticleService</text>
+  <text class="s" x="235" y="171" text-anchor="middle">replicated per region</text>
+
+  <rect class="box cache" x="140" y="235" width="190" height="52"/>
+  <text class="t" x="235" y="257" text-anchor="middle">ArticleCache</text>
+  <text class="s" x="235" y="276" text-anchor="middle">Redis · offline 14-day fill</text>
+
+  <rect class="box db" x="140" y="340" width="190" height="52"/>
+  <text class="t" x="235" y="362" text-anchor="middle">ArticleDatabase</text>
+  <text class="s" x="235" y="381" text-anchor="middle">PostgreSQL · North America</text>
+
+  <!-- Right column: Comment -->
+  <rect class="box" x="490" y="130" width="190" height="52"/>
+  <text class="t" x="585" y="152" text-anchor="middle">CommentService</text>
+  <text class="s" x="585" y="171" text-anchor="middle">replicated per region</text>
+
+  <rect class="box cache" x="490" y="235" width="190" height="52"/>
+  <text class="t" x="585" y="257" text-anchor="middle">CommentCache</text>
+  <text class="s" x="585" y="276" text-anchor="middle">Redis · cache-miss · LRU 30</text>
+
+  <rect class="box db" x="490" y="340" width="190" height="52"/>
+  <text class="t" x="585" y="362" text-anchor="middle">CommentDatabase</text>
+  <text class="s" x="585" y="381" text-anchor="middle">PostgreSQL · North America</text>
+
+  <!-- vertical arrows -->
+  <path class="l" d="M 235 182 L 235 233"/>
+  <path class="l" d="M 235 287 L 235 338"/>
+  <path class="l" d="M 585 182 L 585 233"/>
+  <path class="l" d="M 585 287 L 585 338"/>
+
+  <!-- labels -->
+  <text class="tag" x="241" y="209" text-anchor="start">read-through</text>
+  <text class="tag" x="241" y="316" text-anchor="start">on cache miss</text>
+  <text class="tag" x="591" y="209" text-anchor="start">read-through</text>
+  <text class="tag" x="591" y="316" text-anchor="start">on cache miss</text>
+
+  <!-- region vs NA bracket -->
+  <text class="tag" x="820" y="160" text-anchor="end" font-style="italic">region-local</text>
+  <text class="tag" x="820" y="370" text-anchor="end" font-style="italic">distant (NA)</text>
+</svg></div>
+
+<h2>4 · The two cache strategies</h2>
+<div class="cols">
+  <div class="col">
+    <h3>ArticleCache — offline fill</h3>
+    <p>A background process (<code>article-fill</code>) periodically copies the latest 14 days of articles
+    into Redis. The service only <i>reads</i> the cache and falls back to the database for older articles.
+    Readers get a fast, region-local read for recent content.</p>
+  </div>
+  <div class="col">
+    <h3>CommentCache — cache-miss + LRU</h3>
+    <p>On a miss the service reads the database <i>and</i> stores the comments, tracking the
+    most-recently-accessed articles in a sorted set. When more than 30 articles are cached, the
+    least-recently-used is evicted.</p>
+  </div>
+</div>
+
+<h2>5 · Rehearsal script (10 min)</h2>
+<ul>
+  <li><b>0:00–0:30 — Intro.</b> "Hi, I'm Benjamin. I'll show how I fixed HappyHeadlines' availability with two cache layers."</li>
+  <li><b>0:30–2:30 — The problem.</b> Services are replicated per region, but both talk to one global database in North America → high latency + outages for European users. The ARB rejected an x-axis split on cost. <span class="small">(Point at the region-vs-North-America split on the diagram.)</span></li>
+  <li><b>2:30–6:00 — The solution.</b> Two cache layers: <b>ArticleCache</b> (offline process fills the last 14 days) and <b>CommentCache</b> (cache-miss; holds the 30 most recent articles; evicts LRU when full). <span class="small">(Walk the container diagram left-to-right: service → cache → DB.)</span></li>
+  <li><b>6:00–8:30 — Live demo.</b> <code>docker compose up</code>; show <code>/articles/1</code> → <code>source:"cache"</code>, <code>/articles/12</code> → <code>source:"db"</code>, and the comment cache-miss → hit on the second request.</li>
+  <li><b>8:30–10:00 — Wrap-up.</b> "Both cache layers are implemented and verified. The one piece still left is the hit-ratio dashboard."</li>
+</ul>
+
+<h2>6 · Likely questions (+ answers)</h2>
+<ul>
+  <li><span class="q">Why not just replicate the database?</span> Cost — the ARB rejected an x-axis split because of the expense of standing up and maintaining DBs in Europe and elsewhere.</li>
+  <li><span class="q">Why a cache instead of a read replica?</span> A cache is cheaper and sits where the readers are; it trades a little freshness (stale-by-design) for low latency and high availability.</li>
+  <li><span class="q">Difference between the two caches?</span> ArticleCache is <i>offline filled</i> (a background process pre-warms the last 14 days). CommentCache is <i>cache-miss</i> (filled on demand, capped at 30 articles, LRU eviction).</li>
+  <li><span class="q">What does LRU mean here?</span> When the comment cache is full, the article that hasn't been accessed for the longest is dropped to make room.</li>
+  <li><span class="q">Why Redis?</span> The brief allows any tool; Redis is the common choice for an in-memory cache with built-in expiry and LRU eviction.</li>
+  <li><span class="q">How would you measure success?</span> The hit-ratio dashboard — the fraction of requests served from cache vs. the database (the remaining piece).</li>
+  <li><span class="q">What about stale data?</span> The 14-day article cache is stale-by-design; for comments, the LRU cap bounds staleness. Freshness vs. speed is the trade-off.</li>
+</ul>
+
+<h2>7 · Presentation rules</h2>
+<ul>
+  <li>Join only in your assigned timeslot (not early; leave on time).</li>
+  <li>Webcam on for the whole meeting.</li>
+  <li>Start by saying your name + a short intro.</li>
+  <li>Screen sharing active, ≤10 minutes.</li>
+  <li>Ask a curiosity question to at least one other presenter after.</li>
+</ul>
+
+<h2 class="pagebreak">8 · The solution — full source</h2>
+<h3>Docker Compose topology <span class='fname'>docker-compose.yml</span></h3><pre><code># HappyHeadlines — cache layers between the region-replicated services and the
+# distant global databases. DLS Compulsory Assignment #1 (W40).
+
+services:
+  # --- Global databases (in North America; NOT replicated to regions) ---
+  article-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: articles
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports: [&quot;5433:5432&quot;]
+    volumes:
+      - ./db/init-article.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  comment-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: comments
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports: [&quot;5434:5432&quot;]
+    volumes:
+      - ./db/init-comment.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  # --- Cache layers ---
+  article-cache:
+    image: redis:7-alpine
+    ports: [&quot;6379:6379&quot;]
+
+  comment-cache:
+    image: redis:7-alpine
+    ports: [&quot;6380:6379&quot;]
+
+  # --- Services (replicated per region; talk to the distant DBs via the caches) ---
+  article-service:
+    build: ./server/article-service
+    ports: [&quot;4001:4001&quot;]
+    depends_on: [article-cache, article-db]
+    environment:
+      REDIS_URL: redis://article-cache:6379
+      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+
+  # The ArticleCache OFFLINE fill process — periodically copies the latest
+  # 14 days of articles into Redis. Runs independently of the service.
+  article-fill:
+    build: ./server/article-service
+    command: [&quot;node&quot;, &quot;fill-cache.js&quot;]
+    depends_on: [article-cache, article-db]
+    environment:
+      REDIS_URL: redis://article-cache:6379
+      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+      FILL_INTERVAL_MS: 30000
+
+  comment-service:
+    build: ./server/comment-service
+    ports: [&quot;4002:4002&quot;]
+    depends_on: [comment-cache, comment-db]
+    environment:
+      REDIS_URL: redis://comment-cache:6379
+      DATABASE_URL: postgres://hh:hh@comment-db:5432/comments</code></pre>
+<h3>C4 model (Structurizr DSL) <span class='fname'>docs/architecture.dsl</span></h3><pre><code>workspace &quot;HappyHeadlines — Cache Layers&quot; &quot;DLS Compulsory Assignment #1 (W40): availability fix via cache layers between the region-replicated services and the North-America-only global databases.&quot; {
+
+    model {
+        rider  = person &quot;Rider&quot; &quot;Reads news and comments&quot;
+        editor = person &quot;Editor&quot; &quot;Publishes articles&quot;
+
+        hh = softwareSystem &quot;HappyHeadlines&quot; &quot;News platform&quot; {
+
+            web = container &quot;Web App&quot; &quot;React single-page app&quot;
+
+            articleSvc = container &quot;ArticleService&quot; &quot;Serves articles. Already replicated to each region.&quot; &quot;Node.js&quot;
+            commentSvc = container &quot;CommentService&quot; &quot;Serves comments. Already replicated to each region.&quot; &quot;Node.js&quot;
+
+            articleCache = container &quot;ArticleCache&quot; &quot;Redis. Offline process fills it with articles from the latest 14 days.&quot; &quot;Redis&quot;
+            commentCache = container &quot;CommentCache&quot; &quot;Redis. Cache-miss fill; holds comments for the 30 most recently accessed articles; LRU eviction.&quot; &quot;Redis&quot;
+
+            articleDb = container &quot;ArticleDatabase&quot; &quot;PostgreSQL. Single global instance in North America.&quot; &quot;PostgreSQL&quot;
+            commentDb  = container &quot;CommentDatabase&quot; &quot;PostgreSQL. Single global instance in North America.&quot; &quot;PostgreSQL&quot;
+        }
+
+        rider  -&gt; web        &quot;reads news&quot;
+        editor -&gt; web        &quot;publishes articles&quot;
+        web    -&gt; articleSvc &quot;HTTPS&quot;
+        web    -&gt; commentSvc &quot;HTTPS&quot;
+
+        # The cache layers sit between the region-local services and the
+        # distant North-America databases — this is the whole fix.
+        articleSvc -&gt; articleCache &quot;read-through cache&quot;
+        articleSvc -&gt; articleDb    &quot;on cache miss&quot;
+        commentSvc -&gt; commentCache &quot;read-through cache&quot;
+        commentSvc -&gt; commentDb    &quot;on cache miss&quot;
+    }
+
+    views {
+        systemContext hh &quot;System Context&quot; {
+            include *
+        }
+        container hh &quot;Containers (cache layers highlighted)&quot; {
+            include *
+        }
+    }
+}</code></pre>
+<h3>README <span class='fname'>README.md</span></h3><pre><code># HappyHeadlines — Cache Layers
+
+DLS Compulsory Assignment #1 (W40): fix HappyHeadlines&#x27; availability and
+latency by putting cache layers between the region-replicated services and the
+distant global databases.
+
+Both cache layers are implemented and runnable (see [Running it](#running-it)).
+The only piece still to add is the cache hit-ratio dashboard.
+
+## The problem
+
+The `ArticleService` and `CommentService` are already replicated to each
+region, but they all talk to a single global database instance sitting in
+North America. European users see slow responses; some articles become
+unavailable. Replicating the database (an x-axis split) was rejected on cost,
+so the ARB approved **cache layers** in front of each database instead.
+
+## Architecture (C4)
+
+```mermaid
+flowchart LR
+    Web[&quot;Web App&quot;] --&gt; AS[&quot;ArticleService&lt;br/&gt;(replicated per region)&quot;]
+    Web --&gt; CS[&quot;CommentService&lt;br/&gt;(replicated per region)&quot;]
+
+    AS --&gt; AC[(&quot;ArticleCache&lt;br/&gt;Redis · offline 14-day fill&quot;)]
+    AS --&gt; ADB[(&quot;ArticleDatabase&lt;br/&gt;PostgreSQL · North America&quot;)]
+
+    CS --&gt; CC[(&quot;CommentCache&lt;br/&gt;Redis · cache-miss · LRU 30&quot;)]
+    CS --&gt; CDB[(&quot;CommentDatabase&lt;br/&gt;PostgreSQL · North America&quot;)]
+```
+
+- **ArticleCache** — an **offline** process (`article-fill`) periodically copies
+  the latest 14 days of articles into Redis. The service only reads the cache
+  and falls back to the database for older articles.
+- **CommentCache** — a **cache-miss** strategy: on a miss the service reads the
+  database and stores the comments, tracking the most-recently-accessed
+  articles in a sorted set. When more than 30 articles are cached, the
+  least-recently-used is evicted.
+
+The full text-based C4 model (context + container levels) is in
+[`docs/architecture.dsl`](docs/architecture.dsl) — open it with Structurizr
+Lite (`structurizr/lite` on port 8080) to browse it interactively.
+
+## Topology (Docker Compose)
+
+| Container | Image | Role |
+|---|---|---|
+| `article-db`, `comment-db` | `postgres:16-alpine` | global databases (North America), seeded via `db/init-*.sql` |
+| `article-cache`, `comment-cache` | `redis:7-alpine` | the two cache layers |
+| `article-service`, `comment-service` | custom Node | region services (read-through / cache-miss) |
+| `article-fill` | custom Node | the offline 14-day fill process |
+
+## Running it
+
+```bash
+docker compose up --build
+```
+
+Then exercise the two strategies:
+
+```bash
+# ArticleCache (offline fill)
+curl localhost:4001/cache/size            # how many articles the fill cached
+curl localhost:4001/articles/1            # recent  -&gt; &quot;source&quot;:&quot;cache&quot;
+curl localhost:4001/articles/12           # old     -&gt; &quot;source&quot;:&quot;db&quot;  (outside 14 days)
+
+# CommentCache (cache-miss + LRU)
+curl localhost:4002/articles/1/comments   # first request  -&gt; &quot;source&quot;:&quot;db&quot;
+curl localhost:4002/articles/1/comments   # second request -&gt; &quot;source&quot;:&quot;cache&quot;
+curl localhost:4002/cache/stats           # cached articles vs the 30-article cap
+```
+
+## Scope
+
+**Done:** C4 model, Docker Compose topology, and both cache layers
+(offline 14-day fill + cache-miss LRU).
+
+**Deferred:** the cache hit-ratio dashboard (the monitoring piece of the
+assignment).</code></pre>
+<h3>Article database seed <span class='fname'>db/init-article.sql</span></h3><pre><code>-- ArticleDatabase seed: articles with published_at spread over the last ~3 weeks.
+-- Articles older than 14 days are intentionally included so the offline
+-- ArticleCache fill (latest 14 days) visibly does NOT cache them.
+CREATE TABLE articles (
+  id           SERIAL PRIMARY KEY,
+  title        TEXT NOT NULL,
+  content      TEXT NOT NULL,
+  published_at TIMESTAMPTZ NOT NULL
+);
+
+INSERT INTO articles (title, content, published_at) VALUES
+  (&#x27;City opens new tram line&#x27;, &#x27;The new north-south tram line opened today...&#x27;, NOW() - interval &#x27;1 day&#x27;),
+  (&#x27;Airport strike averted&#x27;, &#x27;Unions reached a deal hours before the deadline...&#x27;, NOW() - interval &#x27;2 days&#x27;),
+  (&#x27;Local team wins cup final&#x27;, &#x27;A last-minute goal sealed the victory...&#x27;, NOW() - interval &#x27;3 days&#x27;),
+  (&#x27;Housing prices keep climbing&#x27;, &#x27;Prices rose for the ninth month in a row...&#x27;, NOW() - interval &#x27;4 days&#x27;),
+  (&#x27;New library opens downtown&#x27;, &#x27;The renovated main library reopened with a digital lab...&#x27;, NOW() - interval &#x27;5 days&#x27;),
+  (&#x27;Flood warning issued&#x27;, &#x27;Heavy rain expected over the weekend...&#x27;, NOW() - interval &#x27;7 days&#x27;),
+  (&#x27;Tech hub announces expansion&#x27;, &#x27;The company will hire 200 engineers...&#x27;, NOW() - interval &#x27;9 days&#x27;),
+  (&#x27;Marathon draws record crowd&#x27;, &#x27;Over 30,000 runners took part...&#x27;, NOW() - interval &#x27;11 days&#x27;),
+  (&#x27;Energy prices fall&#x27;, &#x27;Wholesale prices dropped sharply this week...&#x27;, NOW() - interval &#x27;13 days&#x27;),
+  (&#x27;Museum night a hit&#x27;, &#x27;Tens of thousands visited museums after dark...&#x27;, NOW() - interval &#x27;14 days&#x27;),
+  (&#x27;Election campaign kicks off&#x27;, &#x27;Parties launch their platforms ahead of the vote...&#x27;, NOW() - interval &#x27;18 days&#x27;),
+  (&#x27;Old bridge to be replaced&#x27;, &#x27;The century-old bridge is slated for demolition...&#x27;, NOW() - interval &#x27;25 days&#x27;);</code></pre>
+<h3>Comment database seed <span class='fname'>db/init-comment.sql</span></h3><pre><code>-- CommentDatabase seed: comments attached to articles (referenced by article id,
+-- which matches the ArticleDatabase ids by convention in this demo).
+CREATE TABLE comments (
+  id         SERIAL PRIMARY KEY,
+  article_id INT NOT NULL,
+  author     TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO comments (article_id, author, content) VALUES
+  (1, &#x27;Alice&#x27;, &#x27;Finally! Been waiting for this line for years.&#x27;),
+  (1, &#x27;Bob&#x27;, &#x27;Great, but will it run on time?&#x27;),
+  (2, &#x27;Carla&#x27;, &#x27;Relieved. I fly out this weekend.&#x27;),
+  (3, &#x27;Dan&#x27;, &#x27;What a match. Still can not believe it.&#x27;),
+  (3, &#x27;Eva&#x27;, &#x27;Deserved win after that season.&#x27;),
+  (4, &#x27;Frank&#x27;, &#x27;Rents are getting out of hand.&#x27;),
+  (5, &#x27;Grace&#x27;, &#x27;The digital lab is a great addition.&#x27;),
+  (6, &#x27;Heidi&#x27;, &#x27;Stay safe everyone.&#x27;),
+  (7, &#x27;Ivan&#x27;, &#x27;More jobs is always good news.&#x27;),
+  (8, &#x27;Julia&#x27;, &#x27;The atmosphere was amazing.&#x27;),
+  (9, &#x27;Karl&#x27;, &#x27;Finally some relief on the bill.&#x27;),
+  (10, &#x27;Lena&#x27;, &#x27;Already looking forward to next year.&#x27;);</code></pre>
+<h3>ArticleService — Dockerfile <span class='fname'>server/article-service/Dockerfile</span></h3><pre><code>FROM node:22-alpine
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY server.js fill-cache.js ./
+EXPOSE 4001
+CMD [&quot;node&quot;, &quot;server.js&quot;]</code></pre>
+<h3>ArticleService — package.json <span class='fname'>server/article-service/package.json</span></h3><pre><code>{
+  &quot;name&quot;: &quot;article-service&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;dependencies&quot;: {
+    &quot;redis&quot;: &quot;^4.6.13&quot;,
+    &quot;pg&quot;: &quot;^8.11.3&quot;
+  }
+}</code></pre>
+<h3>ArticleService — read-through <span class='fname'>server/article-service/server.js</span></h3><pre><code>// ArticleService — reads articles through the ArticleCache (Redis).
+// The cache is filled OFFLINE (see fill-cache.js), never on-demand: this service
+// only reads Redis and falls back to the database on a miss (e.g. an article
+// outside the 14-day window).
+import http from &#x27;node:http&#x27;;
+import { createClient } from &#x27;redis&#x27;;
+import pg from &#x27;pg&#x27;;
+
+const { Pool } = pg;
+const REDIS_URL = process.env.REDIS_URL || &#x27;redis://localhost:6379&#x27;;
+const DATABASE_URL = process.env.DATABASE_URL || &#x27;postgres://hh:hh@localhost:5432/articles&#x27;;
+
+const redis = createClient({ url: REDIS_URL });
+redis.on(&#x27;error&#x27;, (e) =&gt; console.error(&#x27;[redis]&#x27;, e.message));
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+async function retry(fn, label, tries = 40) {
+  for (let i = 0; i &lt; tries; i++) {
+    try { await fn(); console.log(`${label} connected`); return; }
+    catch { await new Promise(r =&gt; setTimeout(r, 1000)); }
+  }
+  throw new Error(`${label} never connected`);
+}
+
+const json = (res, code, obj) =&gt; {
+  res.writeHead(code, { &#x27;Content-Type&#x27;: &#x27;application/json&#x27; });
+  res.end(JSON.stringify(obj));
+};
+
+const server = http.createServer(async (req, res) =&gt; {
+  const url = new URL(req.url, &#x27;http://x&#x27;);
+
+  if (url.pathname === &#x27;/health&#x27;) {
+    return json(res, 200, { status: &#x27;ok&#x27;, service: &#x27;article-service&#x27;, cache: REDIS_URL });
+  }
+
+  if (url.pathname === &#x27;/cache/size&#x27;) {
+    const keys = await redis.keys(&#x27;article:*&#x27;);
+    return json(res, 200, { cachedArticles: keys.length });
+  }
+
+  if (url.pathname === &#x27;/articles&#x27;) {
+    const { rows } = await pool.query(&#x27;SELECT id, title, published_at FROM articles ORDER BY published_at DESC&#x27;);
+    const cached = new Set((await redis.keys(&#x27;article:*&#x27;)).map(k =&gt; k.split(&#x27;:&#x27;)[1]));
+    const articles = rows.map(a =&gt; ({ ...a, cached: cached.has(String(a.id)) }));
+    return json(res, 200, { articles });
+  }
+
+  const m = url.pathname.match(/^\/articles\/(\d+)$/);
+  if (m) {
+    const id = m[1];
+    const cached = await redis.get(`article:${id}`);
+    if (cached) return json(res, 200, { source: &#x27;cache&#x27;, article: JSON.parse(cached) });
+
+    const { rows } = await pool.query(&#x27;SELECT id, title, content, published_at FROM articles WHERE id = $1&#x27;, [id]);
+    if (!rows[0]) return json(res, 404, { error: &#x27;not found&#x27; });
+    return json(res, 200, { source: &#x27;db&#x27;, article: rows[0] });
+  }
+
+  json(res, 404, { error: &#x27;not found&#x27; });
+});
+
+async function main() {
+  await retry(() =&gt; redis.connect(), &#x27;redis&#x27;);
+  await retry(() =&gt; pool.query(&#x27;SELECT 1&#x27;), &#x27;postgres&#x27;);
+  server.listen(4001, () =&gt; console.log(&#x27;ArticleService listening on 4001&#x27;));
+}
+main();</code></pre>
+<h3>ArticleCache — offline fill <span class='fname'>server/article-service/fill-cache.js</span></h3><pre><code>// ArticleCache OFFLINE fill — the background process that periodically copies the
+// latest 14 days of articles from the database into Redis. This is the key
+// difference from the CommentCache: the cache is pre-populated here, so the
+// service never writes to it (a read of a non-cached article falls through to DB).
+import { createClient } from &#x27;redis&#x27;;
+import pg from &#x27;pg&#x27;;
+
+const { Pool } = pg;
+const REDIS_URL = process.env.REDIS_URL || &#x27;redis://localhost:6379&#x27;;
+const DATABASE_URL = process.env.DATABASE_URL || &#x27;postgres://hh:hh@localhost:5432/articles&#x27;;
+const INTERVAL_MS = parseInt(process.env.FILL_INTERVAL_MS || &#x27;30000&#x27;, 10);
+
+const redis = createClient({ url: REDIS_URL });
+redis.on(&#x27;error&#x27;, (e) =&gt; console.error(&#x27;[redis]&#x27;, e.message));
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+async function retry(fn, label, tries = 40) {
+  for (let i = 0; i &lt; tries; i++) {
+    try { await fn(); console.log(`${label} connected`); return; }
+    catch { await new Promise(r =&gt; setTimeout(r, 1000)); }
+  }
+  throw new Error(`${label} never connected`);
+}
+
+async function fill() {
+  const { rows } = await pool.query(
+    `SELECT id, title, content, published_at FROM articles
+     WHERE published_at &gt;= NOW() - interval &#x27;14 days&#x27;
+     ORDER BY published_at DESC`
+  );
+  for (const a of rows) {
+    await redis.set(`article:${a.id}`, JSON.stringify(a));
+  }
+  console.log(`[fill] cached ${rows.length} articles from the last 14 days`);
+  return rows.length;
+}
+
+async function main() {
+  await retry(() =&gt; redis.connect(), &#x27;redis&#x27;);
+  await retry(() =&gt; pool.query(&#x27;SELECT 1&#x27;), &#x27;postgres&#x27;);
+  await fill();
+  setInterval(fill, INTERVAL_MS);
+}
+main();</code></pre>
+<h3>CommentService — Dockerfile <span class='fname'>server/comment-service/Dockerfile</span></h3><pre><code>FROM node:22-alpine
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY server.js ./
+EXPOSE 4002
+CMD [&quot;node&quot;, &quot;server.js&quot;]</code></pre>
+<h3>CommentService — package.json <span class='fname'>server/comment-service/package.json</span></h3><pre><code>{
+  &quot;name&quot;: &quot;comment-service&quot;,
+  &quot;version&quot;: &quot;1.0.0&quot;,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;dependencies&quot;: {
+    &quot;redis&quot;: &quot;^4.6.13&quot;,
+    &quot;pg&quot;: &quot;^8.11.3&quot;
+  }
+}</code></pre>
+<h3>CommentService — cache-miss + LRU <span class='fname'>server/comment-service/server.js</span></h3><pre><code>// CommentService — cache-miss with LRU eviction.
+// Reads comments through the CommentCache (Redis). On a MISS it fetches from the
+// database AND stores the result, tracking the most-recently-accessed articles in
+// a sorted set. When more than 30 articles are cached, the least-recently-used one
+// is evicted.
+import http from &#x27;node:http&#x27;;
+import { createClient } from &#x27;redis&#x27;;
+import pg from &#x27;pg&#x27;;
+
+const { Pool } = pg;
+const MAX_CACHED_ARTICLES = 30;
+const LRU_KEY = &#x27;commentcache:lru&#x27;;
+const REDIS_URL = process.env.REDIS_URL || &#x27;redis://localhost:6379&#x27;;
+const DATABASE_URL = process.env.DATABASE_URL || &#x27;postgres://hh:hh@localhost:5432/comments&#x27;;
+
+const redis = createClient({ url: REDIS_URL });
+redis.on(&#x27;error&#x27;, (e) =&gt; console.error(&#x27;[redis]&#x27;, e.message));
+const pool = new Pool({ connectionString: DATABASE_URL });
+
+async function retry(fn, label, tries = 40) {
+  for (let i = 0; i &lt; tries; i++) {
+    try { await fn(); console.log(`${label} connected`); return; }
+    catch { await new Promise(r =&gt; setTimeout(r, 1000)); }
+  }
+  throw new Error(`${label} never connected`);
+}
+
+const json = (res, code, obj) =&gt; {
+  res.writeHead(code, { &#x27;Content-Type&#x27;: &#x27;application/json&#x27; });
+  res.end(JSON.stringify(obj));
+};
+
+async function getCommentsFromDb(articleId) {
+  const { rows } = await pool.query(
+    &#x27;SELECT id, article_id, author, content, created_at FROM comments WHERE article_id = $1 ORDER BY created_at&#x27;,
+    [articleId]
+  );
+  return rows;
+}
+
+async function evictIfOver() {
+  const count = await redis.zCard(LRU_KEY);
+  if (count &gt; MAX_CACHED_ARTICLES) {
+    const oldest = await redis.zRange(LRU_KEY, 0, 0);
+    if (oldest.length) {
+      await redis.del(`comments:${oldest[0]}`);
+      await redis.zRem(LRU_KEY, oldest[0]);
+      console.log(`[lru] evicted article ${oldest[0]} (${count - 1}/${MAX_CACHED_ARTICLES} kept)`);
+    }
+  }
+}
+
+const server = http.createServer(async (req, res) =&gt; {
+  const url = new URL(req.url, &#x27;http://x&#x27;);
+
+  if (url.pathname === &#x27;/health&#x27;) {
+    return json(res, 200, { status: &#x27;ok&#x27;, service: &#x27;comment-service&#x27;, cache: REDIS_URL });
+  }
+
+  if (url.pathname === &#x27;/cache/stats&#x27;) {
+    const cachedArticles = await redis.zCard(LRU_KEY);
+    return json(res, 200, { cachedArticles, max: MAX_CACHED_ARTICLES });
+  }
+
+  const m = url.pathname.match(/^\/articles\/(\d+)\/comments$/);
+  if (m) {
+    const articleId = m[1];
+    const cached = await redis.get(`comments:${articleId}`);
+    if (cached) {
+      await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId }); // touch → becomes most-recent
+      return json(res, 200, { source: &#x27;cache&#x27;, comments: JSON.parse(cached) });
+    }
+
+    const comments = await getCommentsFromDb(articleId);
+    await redis.set(`comments:${articleId}`, JSON.stringify(comments));
+    await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId });
+    await evictIfOver();
+    return json(res, 200, { source: &#x27;db&#x27;, comments });
+  }
+
+  json(res, 404, { error: &#x27;not found&#x27; });
+});
+
+async function main() {
+  await retry(() =&gt; redis.connect(), &#x27;redis&#x27;);
+  await retry(() =&gt; pool.query(&#x27;SELECT 1&#x27;), &#x27;postgres&#x27;);
+  server.listen(4002, () =&gt; console.log(&#x27;CommentService listening on 4002&#x27;));
+}
+main();</code></pre>
+
+</body>
+</html>
