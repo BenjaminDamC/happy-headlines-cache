@@ -17,6 +17,10 @@ const redis = createClient({ url: REDIS_URL });
 redis.on('error', (e) => console.error('[redis]', e.message));
 const pool = new Pool({ connectionString: DATABASE_URL });
 
+// Cache hit-ratio counters (in-memory; reset on restart).
+let cacheHits = 0;
+let cacheMisses = 0;
+
 async function retry(fn, label, tries = 40) {
   for (let i = 0; i < tries; i++) {
     try { await fn(); console.log(`${label} connected`); return; }
@@ -26,7 +30,10 @@ async function retry(fn, label, tries = 40) {
 }
 
 const json = (res, code, obj) => {
-  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.writeHead(code, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+  });
   res.end(JSON.stringify(obj));
 };
 
@@ -62,15 +69,23 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { cachedArticles, max: MAX_CACHED_ARTICLES });
   }
 
+  if (url.pathname === '/cache/hit-ratio') {
+    const total = cacheHits + cacheMisses;
+    const hitRatio = total ? cacheHits / total : 0;
+    return json(res, 200, { service: 'comment-service', hits: cacheHits, misses: cacheMisses, total, hitRatio });
+  }
+
   const m = url.pathname.match(/^\/articles\/(\d+)\/comments$/);
   if (m) {
     const articleId = m[1];
     const cached = await redis.get(`comments:${articleId}`);
     if (cached) {
+      cacheHits++;
       await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId }); // touch → becomes most-recent
       return json(res, 200, { source: 'cache', comments: JSON.parse(cached) });
     }
 
+    cacheMisses++;
     const comments = await getCommentsFromDb(articleId);
     await redis.set(`comments:${articleId}`, JSON.stringify(comments));
     await redis.zAdd(LRU_KEY, { score: Date.now(), value: articleId });

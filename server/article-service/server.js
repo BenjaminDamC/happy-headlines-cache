@@ -14,6 +14,10 @@ const redis = createClient({ url: REDIS_URL });
 redis.on('error', (e) => console.error('[redis]', e.message));
 const pool = new Pool({ connectionString: DATABASE_URL });
 
+// Cache hit-ratio counters (in-memory; reset on restart).
+let cacheHits = 0;
+let cacheMisses = 0;
+
 async function retry(fn, label, tries = 40) {
   for (let i = 0; i < tries; i++) {
     try { await fn(); console.log(`${label} connected`); return; }
@@ -23,7 +27,10 @@ async function retry(fn, label, tries = 40) {
 }
 
 const json = (res, code, obj) => {
-  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.writeHead(code, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+  });
   res.end(JSON.stringify(obj));
 };
 
@@ -39,6 +46,12 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { cachedArticles: keys.length });
   }
 
+  if (url.pathname === '/cache/hit-ratio') {
+    const total = cacheHits + cacheMisses;
+    const hitRatio = total ? cacheHits / total : 0;
+    return json(res, 200, { service: 'article-service', hits: cacheHits, misses: cacheMisses, total, hitRatio });
+  }
+
   if (url.pathname === '/articles') {
     const { rows } = await pool.query('SELECT id, title, published_at FROM articles ORDER BY published_at DESC');
     const cached = new Set((await redis.keys('article:*')).map(k => k.split(':')[1]));
@@ -50,10 +63,14 @@ const server = http.createServer(async (req, res) => {
   if (m) {
     const id = m[1];
     const cached = await redis.get(`article:${id}`);
-    if (cached) return json(res, 200, { source: 'cache', article: JSON.parse(cached) });
+    if (cached) {
+      cacheHits++;
+      return json(res, 200, { source: 'cache', article: JSON.parse(cached) });
+    }
 
     const { rows } = await pool.query('SELECT id, title, content, published_at FROM articles WHERE id = $1', [id]);
     if (!rows[0]) return json(res, 404, { error: 'not found' });
+    cacheMisses++;
     return json(res, 200, { source: 'db', article: rows[0] });
   }
 

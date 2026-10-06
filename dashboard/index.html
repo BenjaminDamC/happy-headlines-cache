@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HappyHeadlines — Cache Hit Ratio</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --card: #131a26;
+    --border: #232c3d;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 40px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; max-width: 1000px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 2px; }
+  .card .strategy { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .ratio-big { font-size: 44px; font-weight: 800; line-height: 1; margin-bottom: 10px; }
+  .bar { height: 10px; background: #1b2433; border-radius: 999px; overflow: hidden; margin-bottom: 18px; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; width: 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .stat { background: #0e141f; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; text-align: center; }
+  .stat .num { font-size: 20px; font-weight: 700; }
+  .stat .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+  .extra { color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .refresh { color: var(--muted); font-size: 12px; margin-top: 24px; }
+  code { background: #0e141f; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>HappyHeadlines — Cache Hit Ratio</h1>
+  <div class="subtitle">Monitoring dashboard · auto-refreshes every 2s · last update <span id="updated">—</span></div>
+  <div class="grid">
+    <div class="card">
+      <h2>ArticleCache</h2>
+      <div class="strategy">offline fill · latest 14 days</div>
+      <div class="ratio-big" id="a-ratio">—</div>
+      <div class="bar"><div class="bar-fill" id="a-bar"></div></div>
+      <div class="stats">
+        <div class="stat"><div class="num" id="a-hits">—</div><div class="lbl">hits</div></div>
+        <div class="stat"><div class="num" id="a-misses">—</div><div class="lbl">misses</div></div>
+        <div class="stat"><div class="num" id="a-total">—</div><div class="lbl">requests</div></div>
+      </div>
+      <div class="extra" id="a-extra">—</div>
+    </div>
+    <div class="card">
+      <h2>CommentCache</h2>
+      <div class="strategy">cache-miss · LRU 30</div>
+      <div class="ratio-big" id="c-ratio">—</div>
+      <div class="bar"><div class="bar-fill" id="c-bar"></div></div>
+      <div class="stats">
+        <div class="stat"><div class="num" id="c-hits">—</div><div class="lbl">hits</div></div>
+        <div class="stat"><div class="num" id="c-misses">—</div><div class="lbl">misses</div></div>
+        <div class="stat"><div class="num" id="c-total">—</div><div class="lbl">requests</div></div>
+      </div>
+      <div class="extra" id="c-extra">—</div>
+    </div>
+  </div>
+  <div class="refresh">Tip: fire some <code>curl</code> requests at :4001 / :4002 and watch the hit ratio climb live.</div>
+
+<script>
+async function loadRatio(url) {
+  try {
+    const r = await fetch(url);
+    return await r.json();
+  } catch (e) {
+    return null;
+  }
+}
+function paint(prefix, ratioData, extraText) {
+  if (!ratioData) {
+    document.getElementById(prefix + '-ratio').textContent = 'offline';
+    return;
+  }
+  const pct = Math.round(ratioData.hitRatio * 100);
+  const ratioEl = document.getElementById(prefix + '-ratio');
+  ratioEl.textContent = pct + '%';
+  ratioEl.style.color = pct >= 80 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById(prefix + '-bar').style.width = pct + '%';
+  document.getElementById(prefix + '-hits').textContent = ratioData.hits;
+  document.getElementById(prefix + '-misses').textContent = ratioData.misses;
+  document.getElementById(prefix + '-total').textContent = ratioData.total;
+  document.getElementById(prefix + '-extra').textContent = extraText;
+}
+async function refresh() {
+  const [ar, as, cr, cs] = await Promise.all([
+    loadRatio('http://localhost:4001/cache/hit-ratio'),
+    loadRatio('http://localhost:4001/cache/size'),
+    loadRatio('http://localhost:4002/cache/hit-ratio'),
+    loadRatio('http://localhost:4002/cache/stats'),
+  ]);
+  paint('a', ar, as ? 'articles cached: ' + as.cachedArticles : '');
+  paint('c', cr, cs ? 'articles cached: ' + cs.cachedArticles + ' / ' + cs.max + ' (LRU cap)' : '');
+  document.getElementById('updated').textContent = new Date().toLocaleTimeString();
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

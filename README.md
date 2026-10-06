@@ -4,8 +4,8 @@ DLS Compulsory Assignment #1 (W40): fix HappyHeadlines' availability and
 latency by putting cache layers between the region-replicated services and the
 distant global databases.
 
-Both cache layers are implemented and runnable (see [Running it](#running-it)).
-The only piece still to add is the cache hit-ratio dashboard.
+All three deliverables are implemented and runnable (see [Running it](#running-it)):
+both cache layers **and** the cache hit-ratio dashboard.
 
 ## The problem
 
@@ -49,6 +49,7 @@ Lite (`structurizr/lite` on port 8080) to browse it interactively.
 | `article-cache`, `comment-cache` | `redis:7-alpine` | the two cache layers |
 | `article-service`, `comment-service` | custom Node | region services (read-through / cache-miss) |
 | `article-fill` | custom Node | the offline 14-day fill process |
+| `dashboard` | `nginx:alpine` | the cache hit-ratio dashboard (http://localhost:4003) |
 
 ## Running it
 
@@ -68,12 +69,18 @@ curl localhost:4001/articles/12           # old     -> "source":"db"  (outside 1
 curl localhost:4002/articles/1/comments   # first request  -> "source":"db"
 curl localhost:4002/articles/1/comments   # second request -> "source":"cache"
 curl localhost:4002/cache/stats           # cached articles vs the 30-article cap
+
+# Hit-ratio (drives the dashboard)
+curl localhost:4001/cache/hit-ratio       # article cache hits/misses/total/ratio
+curl localhost:4002/cache/hit-ratio       # comment cache hits/misses/total/ratio
 ```
+
+## Dashboard
+
+Open **http://localhost:4003** for the cache hit-ratio dashboard — a small
+auto-refreshing page showing hits, misses and hit ratio for both caches.
 
 ## Scope
 
-**Done:** C4 model, Docker Compose topology, and both cache layers
-(offline 14-day fill + cache-miss LRU).
-
-**Deferred:** the cache hit-ratio dashboard (the monitoring piece of the
-assignment).
+**Done:** C4 model, Docker Compose topology, both cache layers (offline 14-day
+fill + cache-miss LRU), and the cache hit-ratio dashboard.
