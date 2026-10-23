@@ -55,7 +55,7 @@ Lite (`structurizr/lite` on port 8080) to browse it interactively.
 | `article-cache`, `comment-cache` | `redis:7-alpine` | the two cache layers |
 | `article-service`, `comment-service` | custom .NET (ASP.NET Core) | region services (read-through / cache-miss) |
 | `article-fill` | custom .NET (console worker) | the offline 14-day fill process |
-| `dashboard` | `nginx:alpine` | the cache hit-ratio dashboard (http://localhost:4003) |
+| `dashboard` | custom (nginx + static) | the cache hit-ratio dashboard (http://localhost:4003) |
 
 ## Running it
 
@@ -85,6 +85,25 @@ curl localhost:4002/cache/hit-ratio       # comment cache hits/misses/total/rati
 
 Open **http://localhost:4003** for the cache hit-ratio dashboard — a small
 auto-refreshing page showing hits, misses and hit ratio for both caches.
+
+## CI/CD
+
+A GitHub Actions pipeline (`.github/workflows/ci-cd.yml`) builds every service
+and publishes the images to the **GitHub Container Registry** on every push to
+`main`.
+
+- **Trigger:** push to `main`
+- **Services:** `article-service`, `comment-service`, `dashboard`
+- **Registry:** `ghcr.io/benjamindamc/<service>`
+- **Versioning:** each image is tagged `latest` (rolling) *and* with the exact
+  git commit SHA, so every build is uniquely versioned and any release can be
+  redeployed verbatim.
+
+Pull and run a released image directly:
+
+```bash
+docker run -p 4001:4001 ghcr.io/benjamindamc/article-service:latest
+```
 
 ## Scope
 

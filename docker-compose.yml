@@ -37,10 +37,8 @@ services:
 
   # --- Hit-ratio dashboard (small monitoring page for the two caches) ---
   dashboard:
-    image: nginx:alpine
+    build: ./dashboard
     ports: ["4003:80"]
-    volumes:
-      - ./dashboard:/usr/share/nginx/html:ro
 
   # --- Services (replicated per region; talk to the distant DBs via the caches) ---
   article-service:
