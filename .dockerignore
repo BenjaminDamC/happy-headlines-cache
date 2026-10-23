@@ -1,0 +1,9 @@
+.git
+**/bin/
+**/obj/
+**/node_modules/
+dashboard
+db
+docs
+presentation
+*.sln

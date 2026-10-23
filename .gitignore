@@ -1,3 +1,23 @@
+# Build output
+bin/
+obj/
+
+# .NET / NuGet
+*.user
+*.suo
+project.lock.json
+*.nupkg
+*.snupkg
+packages/
+
+# Node (legacy)
 node_modules/
-*.log
+
+# IDE
+.idea/
+.vs/
+.vscode/
+
+# OS
 .DS_Store
+*.log
