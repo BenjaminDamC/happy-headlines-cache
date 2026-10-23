@@ -8,8 +8,8 @@ workspace "HappyHeadlines — Cache Layers" "DLS Compulsory Assignment #1 (W40):
 
             web = container "Web App" "React single-page app"
 
-            articleSvc = container "ArticleService" "Serves articles. Already replicated to each region." "Node.js"
-            commentSvc = container "CommentService" "Serves comments. Already replicated to each region." "Node.js"
+            articleSvc = container "ArticleService" "Serves articles. Already replicated to each region." "C# / .NET 9"
+            commentSvc = container "CommentService" "Serves comments. Already replicated to each region." "C# / .NET 9"
 
             articleCache = container "ArticleCache" "Redis. Offline process fills it with articles from the latest 14 days." "Redis"
             commentCache = container "CommentCache" "Redis. Cache-miss fill; holds comments for the 30 most recently accessed articles; LRU eviction." "Redis"

@@ -7,6 +7,12 @@ distant global databases.
 All three deliverables are implemented and runnable (see [Running it](#running-it)):
 both cache layers **and** the cache hit-ratio dashboard.
 
+## Stack
+
+C# / .NET 9 — the services are ASP.NET Core minimal APIs and the offline fill is
+a .NET console worker. Redis via **StackExchange.Redis**, PostgreSQL via
+**Npgsql**, deployed with Docker Compose.
+
 ## The problem
 
 The `ArticleService` and `CommentService` are already replicated to each
@@ -47,8 +53,8 @@ Lite (`structurizr/lite` on port 8080) to browse it interactively.
 |---|---|---|
 | `article-db`, `comment-db` | `postgres:16-alpine` | global databases (North America), seeded via `db/init-*.sql` |
 | `article-cache`, `comment-cache` | `redis:7-alpine` | the two cache layers |
-| `article-service`, `comment-service` | custom Node | region services (read-through / cache-miss) |
-| `article-fill` | custom Node | the offline 14-day fill process |
+| `article-service`, `comment-service` | custom .NET (ASP.NET Core) | region services (read-through / cache-miss) |
+| `article-fill` | custom .NET (console worker) | the offline 14-day fill process |
 | `dashboard` | `nginx:alpine` | the cache hit-ratio dashboard (http://localhost:4003) |
 
 ## Running it

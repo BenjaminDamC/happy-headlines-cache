@@ -1,5 +1,8 @@
 # HappyHeadlines — cache layers between the region-replicated services and the
 # distant global databases. DLS Compulsory Assignment #1 (W40).
+#
+# Ported to C# / .NET 9: the services are ASP.NET Core minimal APIs and the
+# offline fill is a .NET console worker (both talk Redis + PostgreSQL).
 
 services:
   # --- Global databases (in North America; NOT replicated to regions) ---
@@ -41,28 +44,34 @@ services:
 
   # --- Services (replicated per region; talk to the distant DBs via the caches) ---
   article-service:
-    build: ./server/article-service
+    build:
+      context: .
+      dockerfile: server/article-service/Dockerfile
     ports: ["4001:4001"]
     depends_on: [article-cache, article-db]
     environment:
       REDIS_URL: redis://article-cache:6379
-      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+      DATABASE_URL: "Host=article-db;Port=5432;Database=articles;Username=hh;Password=hh"
 
   # The ArticleCache OFFLINE fill process — periodically copies the latest
   # 14 days of articles into Redis. Runs independently of the service.
   article-fill:
-    build: ./server/article-service
-    command: ["node", "fill-cache.js"]
+    build:
+      context: .
+      dockerfile: server/article-service/Dockerfile
+    command: ["dotnet", "/app/fill/ArticleFill.dll"]
     depends_on: [article-cache, article-db]
     environment:
       REDIS_URL: redis://article-cache:6379
-      DATABASE_URL: postgres://hh:hh@article-db:5432/articles
+      DATABASE_URL: "Host=article-db;Port=5432;Database=articles;Username=hh;Password=hh"
       FILL_INTERVAL_MS: 30000
 
   comment-service:
-    build: ./server/comment-service
+    build:
+      context: .
+      dockerfile: server/comment-service/Dockerfile
     ports: ["4002:4002"]
     depends_on: [comment-cache, comment-db]
     environment:
       REDIS_URL: redis://comment-cache:6379
-      DATABASE_URL: postgres://hh:hh@comment-db:5432/comments
+      DATABASE_URL: "Host=comment-db;Port=5432;Database=comments;Username=hh;Password=hh"
