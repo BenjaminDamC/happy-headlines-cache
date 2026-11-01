@@ -33,7 +33,7 @@ var consumer = new EventingBasicConsumer(channel);
 consumer.Received += (_, ea) =>
 {
     var text = Encoding.UTF8.GetString(ea.Body.ToArray());
-    var evt = JsonSerializer.Deserialize<SubscriberEvent>(text);
+    var evt = JsonSerializer.Deserialize<SubscriberEvent>(text, JsonDefaults.Web);
     if (evt is null) return;
 
     var action = evt.Event switch
@@ -77,3 +77,8 @@ static IModel ConnectRabbit(string host, int tries = 40)
 }
 
 internal record SubscriberEvent(string Event, string Email, DateTimeOffset Timestamp);
+
+internal static class JsonDefaults
+{
+    public static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+}

@@ -126,7 +126,7 @@ Web ──> SubscriberService ──(RabbitMQ)──> NewsletterService
   subscriber service.
 - **RabbitMQ** (`rabbitmq:3-management`, AMQP `:5672`, UI `:15672`) — the queue
   that isolates the two swimlanes.
-- **FeatureHub** (`:8087` edge) — the release-toggle backend.
+- **FeatureHub** (`:8090` — edge + admin console) — the release-toggle backend.
 
 ### Release toggle (FeatureHub)
 

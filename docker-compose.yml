@@ -101,7 +101,7 @@ services:
     volumes:
       - featurehub-h2-data:/db
     ports:
-      - "8087:8085"     # edge (host 8087 -> container 8085)
+      - "8090:8085"     # edge + admin console (host 8090 -> container 8085)
 
   # SubscriberService — owns the subscriber DB, publishes to RabbitMQ, and is
   # hidden behind a FeatureHub release toggle ("SubscriberService").
@@ -115,7 +115,7 @@ services:
       DATABASE_URL: "Host=subscriber-db;Port=5432;Database=subscribers;Username=hh;Password=hh"
       RABBITMQ_URL: rabbitmq
       FEATUREHUB_URL: "http://featurehub:8085"
-      FEATUREHUB_API_KEY: "default/<your-sdk-key>"
+      FEATUREHUB_API_KEY: "f47fc1fb-1b86-4982-a6c7-765b2c697258/y3sMWu7TUCQMjy1ZixLNQL8u0KrwWrCKvmSbFac5"
 
   # NewsletterService — consumes subscriber events from RabbitMQ. No shared DB.
   newsletter-service:
