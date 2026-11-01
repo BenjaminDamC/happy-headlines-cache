@@ -73,3 +73,59 @@ services:
     environment:
       REDIS_URL: redis://comment-cache:6379
       DATABASE_URL: "Host=comment-db;Port=5432;Database=comments;Username=hh;Password=hh"
+
+  # --- W44: newsletter + subscriber services (fault-isolated swimlanes) ---
+
+  # The subscriber feature's own database — separate from article/comment DBs.
+  subscriber-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: subscribers
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports: ["5435:5432"]
+    volumes:
+      - ./db/init-subscriber.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  # The queue: the ONLY coupling between the two services (fault isolation).
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI (guest/guest)
+
+  # Release-toggle backend (FeatureHub). SDK connects to the edge on 8085.
+  featurehub:
+    image: featurehub/party-server:latest
+    restart: always
+    volumes:
+      - featurehub-h2-data:/db
+    ports:
+      - "8087:8085"     # edge (host 8087 -> container 8085)
+
+  # SubscriberService — owns the subscriber DB, publishes to RabbitMQ, and is
+  # hidden behind a FeatureHub release toggle ("SubscriberService").
+  subscriber-service:
+    build:
+      context: .
+      dockerfile: server/subscriber-service/Dockerfile
+    ports: ["4004:4004"]
+    depends_on: [subscriber-db, rabbitmq, featurehub]
+    environment:
+      DATABASE_URL: "Host=subscriber-db;Port=5432;Database=subscribers;Username=hh;Password=hh"
+      RABBITMQ_URL: rabbitmq
+      FEATUREHUB_URL: "http://featurehub:8085"
+      FEATUREHUB_API_KEY: "default/<your-sdk-key>"
+
+  # NewsletterService — consumes subscriber events from RabbitMQ. No shared DB.
+  newsletter-service:
+    build:
+      context: .
+      dockerfile: server/newsletter-service/Dockerfile
+    ports: ["4005:4005"]
+    depends_on: [rabbitmq]
+    environment:
+      RABBITMQ_URL: rabbitmq
+
+volumes:
+  featurehub-h2-data:

@@ -27,6 +27,12 @@ jobs:
           - image: comment-service
             context: .
             dockerfile: server/comment-service/Dockerfile
+          - image: subscriber-service
+            context: .
+            dockerfile: server/subscriber-service/Dockerfile
+          - image: newsletter-service
+            context: .
+            dockerfile: server/newsletter-service/Dockerfile
           - image: dashboard
             context: dashboard
             dockerfile: dashboard/Dockerfile

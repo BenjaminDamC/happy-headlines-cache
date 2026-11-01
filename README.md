@@ -105,7 +105,64 @@ Pull and run a released image directly:
 docker run -p 4001:4001 ghcr.io/benjamindamc/article-service:latest
 ```
 
+## W44 — Newsletter & Subscriber services (fault isolation + release toggle)
+
+On top of the cache layers, this adds a **SubscriberService** and a
+**NewsletterService** in two separate swimlanes, decoupled by **RabbitMQ** and
+each with its own data, so a failure in one cannot take down the other.
+
+```
+Web ──> SubscriberService ──(RabbitMQ)──> NewsletterService
+             │   release toggle (FeatureHub)
+             ▼
+        subscriber-db (PostgreSQL)
+```
+
+- **SubscriberService** (`:4004`) — owns the subscriber database; exposes
+  `GET/POST /subscribers` and `DELETE /subscribers/{email}`; publishes
+  `subscriber.created / updated / deleted` events to RabbitMQ.
+- **NewsletterService** (`:4005`) — consumes those events from the queue and
+  "sends" the corresponding email (logs it). It shares **no database** with the
+  subscriber service.
+- **RabbitMQ** (`rabbitmq:3-management`, AMQP `:5672`, UI `:15672`) — the queue
+  that isolates the two swimlanes.
+- **FeatureHub** (`:8087` edge) — the release-toggle backend.
+
+### Release toggle (FeatureHub)
+
+The whole `SubscriberService` is hidden behind a boolean FeatureHub flag
+**`SubscriberService`**. When it is OFF every endpoint returns `503`; when ON the
+service works normally. Because the toggle lives in FeatureHub, you can roll the
+feature out/in **without redeploying** — and you can go further and gate
+individual endpoints (a "partial" rollout) by adding more flags.
+
+```bash
+# toggle is OFF -> 503
+curl -i localhost:4004/subscribers
+
+# flip "SubscriberService" ON in the FeatureHub admin console, then:
+curl localhost:4004/subscribers
+```
+
+Before running, set the FeatureHub server-evaluated API key in
+`docker-compose.yml` (`FEATUREHUB_API_KEY`), create the `SubscriberService`
+boolean feature, and toggle it. If FeatureHub is unreachable the service fails
+**closed** (disabled).
+
+### Try the fault isolation
+
+```bash
+docker compose up --build
+curl -X POST localhost:4004/subscribers -H 'Content-Type: application/json' -d '{"email":"a@b.dk"}'
+# -> NewsletterService logs "welcome email -> a@b.dk" (via RabbitMQ)
+```
+
+Stop the `newsletter-service` container, post another subscriber, then restart
+it — the event is still delivered from the queue (isolation works both ways).
+
 ## Scope
 
 **Done:** C4 model, Docker Compose topology, both cache layers (offline 14-day
-fill + cache-miss LRU), and the cache hit-ratio dashboard.
+fill + cache-miss LRU), the cache hit-ratio dashboard, and the W44
+subscriber/newsletter services with RabbitMQ fault isolation and a FeatureHub
+release toggle.
