@@ -30,6 +30,7 @@ long requestCount = 0;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:4001");
 builder.Services.AddCors();
+builder.Services.AddResponseCompression();
 builder.Services.AddHttpClient("coordinator", c => c.BaseAddress = new Uri(coordinatorUrl));
 
 // Monitoring — distributed tracing exported to Jaeger over OTLP/HTTP.
@@ -51,6 +52,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+app.UseResponseCompression();
 app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 
 // Structured request log + counter, correlated to the active trace id.
@@ -160,8 +162,12 @@ app.MapGet("/articles", async () =>
     });
 });
 
-app.MapGet("/articles/{id:int}", async (int id) =>
+app.MapGet("/articles/{id:int}", async (int id, HttpContext ctx) =>
 {
+    // Sustainability (GAF): let clients cache article reads for a minute, so
+    // repeat requests are served locally instead of hitting the network + DB.
+    ctx.Response.Headers.CacheControl = "public, max-age=60";
+
     var cached = await db.StringGetAsync($"article:{id}");
     if (!cached.IsNull)
     {

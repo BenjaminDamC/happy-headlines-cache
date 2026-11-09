@@ -33,6 +33,7 @@ long requestCount = 0;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:4002");
 builder.Services.AddCors();
+builder.Services.AddResponseCompression();
 builder.Services.AddHttpClient("profanity", c => c.BaseAddress = new Uri(profanityUrl));
 
 // Monitoring — distributed tracing exported to Jaeger over OTLP/HTTP.
@@ -54,6 +55,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+app.UseResponseCompression();
 app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
 
 // Structured request log + counter, correlated to the active trace id.

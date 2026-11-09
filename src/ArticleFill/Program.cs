@@ -45,6 +45,7 @@ static async Task<int> FillAsync(IDatabase db, List<NpgsqlDataSource> dataSource
 {
     var json = JsonDefaults.Web;
     var written = 0;
+    var skipped = 0;
 
     foreach (var dataSource in dataSources)
     {
@@ -61,12 +62,21 @@ static async Task<int> FillAsync(IDatabase db, List<NpgsqlDataSource> dataSource
                 reader.GetString(1),
                 reader.GetString(2),
                 reader.GetFieldValue<DateTimeOffset>(3));
-            await db.StringSetAsync($"article:{article.Id}", JsonSerializer.Serialize(article, json));
+            // Sustainability (GAF): only write when the cached value actually
+            // changed, avoiding redundant Redis writes on every fill tick.
+            var serialized = JsonSerializer.Serialize(article, json);
+            var existing = await db.StringGetAsync($"article:{article.Id}");
+            if (!existing.IsNull && existing.ToString() == serialized)
+            {
+                skipped++;
+                continue;
+            }
+            await db.StringSetAsync($"article:{article.Id}", serialized);
             written++;
         }
     }
 
-    Console.WriteLine($"[fill] cached {written} articles from the last 14 days across {dataSources.Count} shard(s)");
+    Console.WriteLine($"[fill] cached {written} articles (skipped {skipped} unchanged) from the last 14 days across {dataSources.Count} shard(s)");
     return written;
 }
 
