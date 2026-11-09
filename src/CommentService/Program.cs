@@ -23,7 +23,7 @@ const string LruKey = "commentcache:lru";
 var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "redis://localhost:6379";
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL") ?? "Host=localhost;Port=5432;Database=comments;Username=hh;Password=hh";
 var profanityUrl = Environment.GetEnvironmentVariable("PROFANITY_URL") ?? "http://profanity-service:4006";
-var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4317";
 
 // Cache hit-ratio counters (in-memory; reset on restart).
 long cacheHits = 0;
@@ -42,11 +42,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddOtlpExporter(o =>
-        {
-            o.Protocol = OtlpExportProtocol.HttpProtobuf;
-            o.Endpoint = new Uri(otlpEndpoint);
-        }));
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)));
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {

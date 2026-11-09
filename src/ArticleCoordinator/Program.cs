@@ -17,7 +17,7 @@ var shardNames = (Environment.GetEnvironmentVariable("SHARD_NAMES") ?? "article-
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var connTemplate = Environment.GetEnvironmentVariable("SHARD_CONN_TEMPLATE")
     ?? "Host={0};Port=5432;Database=articles;Username=hh;Password=hh";
-var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4317";
 
 var shards = shardNames
     .Select((name, i) => new Shard(i, name, string.Format(connTemplate, name)))
@@ -38,11 +38,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddOtlpExporter(o =>
-        {
-            o.Protocol = OtlpExportProtocol.HttpProtobuf;
-            o.Endpoint = new Uri(otlpEndpoint);
-        }));
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)));
 
 var app = builder.Build();
 

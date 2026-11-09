@@ -12,7 +12,7 @@ using OpenTelemetry.Trace;
 // failure and the CommentService keeps working (comments are accepted but left
 // unmoderated) instead of cascading the outage.
 
-var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4317";
 
 long requestCount = 0;
 
@@ -30,11 +30,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddOtlpExporter(o =>
-        {
-            o.Protocol = OtlpExportProtocol.HttpProtobuf;
-            o.Endpoint = new Uri(otlpEndpoint);
-        }));
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)));
 
 var app = builder.Build();
 

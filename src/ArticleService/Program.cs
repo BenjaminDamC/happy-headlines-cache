@@ -20,7 +20,7 @@ using StackExchange.Redis;
 
 var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "redis://localhost:6379";
 var coordinatorUrl = Environment.GetEnvironmentVariable("COORDINATOR_URL") ?? "http://article-coordinator:4007";
-var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4317";
 
 // Cache hit-ratio counters (in-memory; reset on restart).
 long cacheHits = 0;
@@ -39,11 +39,7 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddOtlpExporter(o =>
-        {
-            o.Protocol = OtlpExportProtocol.HttpProtobuf;
-            o.Endpoint = new Uri(otlpEndpoint);
-        }));
+        .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)));
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
