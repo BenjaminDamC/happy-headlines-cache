@@ -7,12 +7,17 @@ using StackExchange.Redis;
 // database AND stores the result, tracking the most-recently-accessed articles in
 // a sorted set. When more than 30 articles are cached, the least-recently-used one
 // is evicted.
+//
+// Fault isolation: new comments are moderated by the ProfanityService over HTTP,
+// behind a hand-rolled circuit breaker. When the ProfanityService is down the
+// breaker opens and comments are accepted unmoderated instead of failing.
 
 const int MaxCachedArticles = 30;
 const string LruKey = "commentcache:lru";
 
 var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "redis://localhost:6379";
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL") ?? "Host=localhost;Port=5432;Database=comments;Username=hh;Password=hh";
+var profanityUrl = Environment.GetEnvironmentVariable("PROFANITY_URL") ?? "http://profanity-service:4006";
 
 // Cache hit-ratio counters (in-memory; reset on restart).
 long cacheHits = 0;
@@ -21,6 +26,7 @@ long cacheMisses = 0;
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:4002");
 builder.Services.AddCors();
+builder.Services.AddHttpClient("profanity", c => c.BaseAddress = new Uri(profanityUrl));
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -40,8 +46,14 @@ await WithRetryAsync(async () =>
 
 var db = redis.GetDatabase();
 
+// Circuit breaker guarding the ProfanityService call (fault isolation).
+var breaker = new CircuitBreaker();
+
 app.MapGet("/health", () =>
     Results.Ok(new { status = "ok", service = "comment-service", cache = redisUrl }));
+
+app.MapGet("/circuit", () =>
+    Results.Ok(new { service = "profanity-service", breaker = breaker.State }));
 
 app.MapGet("/cache/stats", async () =>
 {
@@ -78,6 +90,70 @@ app.MapGet("/articles/{articleId:int}/comments", async (int articleId) =>
     await EvictIfOverAsync(db);
 
     return Results.Ok(new { source = "db", comments = dbComments });
+});
+
+app.MapPost("/articles/{articleId:int}/comments", async (int articleId, CommentRequest req, IHttpClientFactory httpFactory) =>
+{
+    if (string.IsNullOrWhiteSpace(req.Author) || string.IsNullOrWhiteSpace(req.Content))
+        return Results.BadRequest(new { error = "author and content are required" });
+
+    // Moderate the comment through the ProfanityService, behind the circuit
+    // breaker. If the breaker is open (ProfanityService down) we degrade
+    // gracefully: accept the comment but leave it unmoderated, so an outage in
+    // that swimlane does not block commenting.
+    var moderated = true;
+
+    if (breaker.IsOpen)
+    {
+        moderated = false;
+        Console.WriteLine("[circuit] OPEN — skipping profanity check, accepting comment unmoderated");
+    }
+    else
+    {
+        try
+        {
+            var client = httpFactory.CreateClient("profanity");
+            var response = await client.GetAsync($"/check?text={Uri.EscapeDataString(req.Content)}");
+            response.EnsureSuccessStatusCode();
+            var check = JsonSerializer.Deserialize<ProfanityResult>(
+                await response.Content.ReadAsStringAsync(), JsonDefaults.Web);
+
+            if (check?.Flagged == true)
+                return Results.BadRequest(new { error = "comment rejected: contains profanity", matches = check.Matches });
+
+            breaker.RecordSuccess();
+        }
+        catch (Exception ex)
+        {
+            breaker.RecordFailure();
+            moderated = false;
+            Console.WriteLine($"[circuit] profanity check failed: {ex.Message} (state={breaker.State})");
+        }
+    }
+
+    // Insert the comment, then invalidate its cache entry so the next read refills.
+    await using var cmd = dataSource.CreateCommand(
+        "INSERT INTO comments (article_id, author, content) VALUES ($1, $2, $3) RETURNING id, created_at");
+    cmd.Parameters.AddWithValue(articleId);
+    cmd.Parameters.AddWithValue(req.Author.Trim());
+    cmd.Parameters.AddWithValue(req.Content.Trim());
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    var id = reader.GetInt32(0);
+    var createdAt = reader.GetFieldValue<DateTimeOffset>(1);
+
+    await db.KeyDeleteAsync($"comments:{articleId}");
+    await db.SortedSetRemoveAsync(LruKey, articleId);
+
+    return Results.Ok(new
+    {
+        id,
+        articleId,
+        author = req.Author.Trim(),
+        content = req.Content.Trim(),
+        moderated,
+        createdAt,
+    });
 });
 
 app.Run();
@@ -160,6 +236,8 @@ static async Task WithRetryAsync(Func<Task> action, string label, int tries = 40
 }
 
 internal record Comment(int Id, int ArticleId, string Author, string Content, DateTimeOffset CreatedAt);
+internal record CommentRequest(string Author, string Content);
+internal record ProfanityResult(bool Flagged, string[] Matches);
 
 internal static class JsonDefaults
 {

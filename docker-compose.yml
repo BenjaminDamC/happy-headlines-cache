@@ -69,10 +69,19 @@ services:
       context: .
       dockerfile: server/comment-service/Dockerfile
     ports: ["4002:4002"]
-    depends_on: [comment-cache, comment-db]
+    depends_on: [comment-cache, comment-db, profanity-service]
     environment:
       REDIS_URL: redis://comment-cache:6379
       DATABASE_URL: "Host=comment-db;Port=5432;Database=comments;Username=hh;Password=hh"
+      PROFANITY_URL: http://profanity-service:4006
+
+  # ProfanityService — screens comment text. Its own swimlane: the CommentService
+  # calls it over HTTP through a circuit breaker (see W46 fault isolation).
+  profanity-service:
+    build:
+      context: .
+      dockerfile: server/profanity-service/Dockerfile
+    ports: ["4006:4006"]
 
   # --- W44: newsletter + subscriber services (fault-isolated swimlanes) ---
 
