@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HappyHeadlines C4 — Level 2 (Containers)</title>
+<style>
+  html,body{margin:0;padding:0;background:#fff;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  svg{display:block;}
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1460 940" width="1460" height="940" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 z" fill="#666"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1460" height="940" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="20" y="34" font-size="24" font-weight="bold" fill="#222">HappyHeadlines — C4 Level 2 (Containers)</text>
+
+  <!-- People -->
+  <g>
+    <rect x="40" y="70" width="150" height="54" rx="6" fill="#08427b"/>
+    <text x="115" y="102" font-size="16" fill="#fff" text-anchor="middle">Rider</text>
+    <rect x="240" y="70" width="150" height="54" rx="6" fill="#08427b"/>
+    <text x="315" y="102" font-size="16" fill="#fff" text-anchor="middle">Editor</text>
+  </g>
+
+  <!-- Web app -->
+  <rect x="500" y="70" width="180" height="54" rx="6" fill="#1168bd"/>
+  <text x="590" y="102" font-size="15" fill="#fff" text-anchor="middle">Web App (React)</text>
+
+  <!-- Arrows people -> web -->
+  <line x1="190" y1="97" x2="500" y2="97" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="390" y1="124" x2="500" y2="110" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== Article flow ===== -->
+  <text x="40" y="170" font-size="14" font-weight="bold" fill="#555">ARTICLE FLOW (x-axis + z-axis)</text>
+
+  <!-- Load balancer -->
+  <rect x="40" y="190" width="200" height="54" rx="6" fill="#438dd5"/>
+  <text x="140" y="214" font-size="14" fill="#fff" text-anchor="middle">Article LB (nginx)</text>
+  <text x="140" y="232" font-size="11" fill="#eef" text-anchor="middle">x-axis: round-robin</text>
+
+  <!-- Replicas -->
+  <rect x="300" y="185" width="210" height="54" rx="6" fill="#438dd5"/>
+  <text x="405" y="208" font-size="13" fill="#fff" text-anchor="middle">ArticleService (replica 1)</text>
+  <text x="405" y="226" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+  <rect x="300" y="260" width="210" height="54" rx="6" fill="#438dd5"/>
+  <text x="405" y="283" font-size="13" fill="#fff" text-anchor="middle">ArticleService (replica 2)</text>
+  <text x="405" y="301" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+
+  <line x1="240" y1="217" x2="300" y2="212" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="240" y1="217" x2="300" y2="287" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Coordinator -->
+  <rect x="590" y="215" width="220" height="54" rx="6" fill="#999"/>
+  <text x="700" y="238" font-size="13" fill="#fff" text-anchor="middle">ArticleCoordinator</text>
+  <text x="700" y="256" font-size="11" fill="#eee" text-anchor="middle">z-axis coordination</text>
+
+  <line x1="510" y1="212" x2="590" y2="242" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="510" y1="287" x2="590" y2="242" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Shards -->
+  <g>
+    <ellipse cx="860" cy="205" rx="80" ry="18" fill="#438dd5"/>
+    <rect x="780" y="205" width="160" height="46" rx="4" fill="#438dd5"/>
+    <ellipse cx="860" cy="251" rx="80" ry="18" fill="#2a6db0"/>
+    <text x="860" y="232" font-size="13" fill="#fff" text-anchor="middle">ArticleDB shard 1</text>
+    <text x="860" y="247" font-size="10" fill="#dff" text-anchor="middle">even ids</text>
+  </g>
+  <g>
+    <ellipse cx="860" cy="315" rx="80" ry="18" fill="#438dd5"/>
+    <rect x="780" y="315" width="160" height="46" rx="4" fill="#438dd5"/>
+    <ellipse cx="860" cy="361" rx="80" ry="18" fill="#2a6db0"/>
+    <text x="860" y="342" font-size="13" fill="#fff" text-anchor="middle">ArticleDB shard 2</text>
+    <text x="860" y="357" font-size="10" fill="#dff" text-anchor="middle">odd ids</text>
+  </g>
+
+  <line x1="810" y1="242" x2="780" y2="228" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="810" y1="242" x2="780" y2="338" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Article cache -->
+  <rect x="300" y="355" width="210" height="46" rx="6" fill="#999"/>
+  <text x="405" y="382" font-size="13" fill="#fff" text-anchor="middle">ArticleCache (Redis)</text>
+  <line x1="405" y1="239" x2="405" y2="355" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="405" y1="314" x2="405" y2="355" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== Comment flow ===== -->
+  <text x="40" y="440" font-size="14" font-weight="bold" fill="#555">COMMENT FLOW (fault isolation)</text>
+
+  <rect x="40" y="460" width="210" height="54" rx="6" fill="#438dd5"/>
+  <text x="145" y="483" font-size="13" fill="#fff" text-anchor="middle">CommentService</text>
+  <text x="145" y="501" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+
+  <rect x="330" y="460" width="200" height="54" rx="6" fill="#438dd5"/>
+  <text x="430" y="483" font-size="13" fill="#fff" text-anchor="middle">ProfanityService</text>
+  <text x="430" y="501" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+
+  <line x1="250" y1="487" x2="330" y2="487" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="290" y="478" font-size="11" fill="#666" text-anchor="middle">circuit breaker</text>
+
+  <g>
+    <ellipse cx="620" cy="473" rx="80" ry="16" fill="#999"/>
+    <rect x="540" y="473" width="160" height="42" rx="4" fill="#999"/>
+    <ellipse cx="620" cy="515" rx="80" ry="16" fill="#777"/>
+    <text x="620" y="498" font-size="12" fill="#fff" text-anchor="middle">CommentCache</text>
+  </g>
+  <g>
+    <ellipse cx="620" cy="575" rx="80" ry="16" fill="#438dd5"/>
+    <rect x="540" y="575" width="160" height="42" rx="4" fill="#438dd5"/>
+    <ellipse cx="620" cy="617" rx="80" ry="16" fill="#2a6db0"/>
+    <text x="620" y="600" font-size="12" fill="#fff" text-anchor="middle">CommentDB</text>
+  </g>
+  <line x1="250" y1="500" x2="540" y2="494" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="145" y1="514" x2="620" y2="575" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== Subscriber flow ===== -->
+  <text x="40" y="660" font-size="14" font-weight="bold" fill="#555">SUBSCRIBER / NEWSLETTER FLOW (W44 · release toggle)</text>
+
+  <rect x="40" y="680" width="210" height="54" rx="6" fill="#438dd5"/>
+  <text x="145" y="703" font-size="13" fill="#fff" text-anchor="middle">SubscriberService</text>
+  <text x="145" y="721" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+
+  <rect x="330" y="680" width="200" height="54" rx="6" fill="#999"/>
+  <text x="430" y="707" font-size="13" fill="#fff" text-anchor="middle">RabbitMQ</text>
+
+  <rect x="610" y="680" width="210" height="54" rx="6" fill="#438dd5"/>
+  <text x="715" y="703" font-size="13" fill="#fff" text-anchor="middle">NewsletterService</text>
+  <text x="715" y="721" font-size="11" fill="#eef" text-anchor="middle">C# / .NET 9</text>
+
+  <line x1="250" y1="707" x2="330" y2="707" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="530" y1="707" x2="610" y2="707" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="330" y="770" width="200" height="46" rx="6" fill="#999"/>
+  <text x="430" y="797" font-size="13" fill="#fff" text-anchor="middle">FeatureHub</text>
+  <line x1="145" y1="734" x2="360" y2="770" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="715" y1="734" x2="510" y2="770" stroke="#666" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== Monitoring ===== -->
+  <text x="900" y="660" font-size="14" font-weight="bold" fill="#555">MONITORING</text>
+  <rect x="900" y="680" width="200" height="54" rx="6" fill="#999"/>
+  <text x="1000" y="707" font-size="13" fill="#fff" text-anchor="middle">Jaeger (tracing)</text>
+  <rect x="900" y="770" width="200" height="46" rx="6" fill="#999"/>
+  <text x="1000" y="797" font-size="13" fill="#fff" text-anchor="middle">Prometheus (metrics)</text>
+
+  <!-- Legend -->
+  <g font-size="11" fill="#555">
+    <rect x="1180" y="80" width="14" height="14" fill="#08427b"/>
+    <text x="1200" y="92">Person</text>
+    <rect x="1180" y="104" width="14" height="14" fill="#1168bd"/>
+    <text x="1200" y="116">System</text>
+    <rect x="1180" y="128" width="14" height="14" fill="#438dd5"/>
+    <text x="1200" y="140">Container (.NET)</text>
+    <rect x="1180" y="152" width="14" height="14" fill="#999"/>
+    <text x="1200" y="164">Infrastructure</text>
+  </g>
+</svg>
+</body>
+</html>
