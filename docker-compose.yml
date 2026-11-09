@@ -192,9 +192,11 @@ services:
       context: .
       dockerfile: server/newsletter-service/Dockerfile
     ports: ["4005:4005"]
-    depends_on: [rabbitmq]
+    depends_on: [rabbitmq, featurehub]
     environment:
       RABBITMQ_URL: rabbitmq
+      FEATUREHUB_URL: "http://featurehub:8085"
+      FEATUREHUB_API_KEY: "f47fc1fb-1b86-4982-a6c7-765b2c697258/y3sMWu7TUCQMjy1ZixLNQL8u0KrwWrCKvmSbFac5"
 
 volumes:
   featurehub-h2-data:
