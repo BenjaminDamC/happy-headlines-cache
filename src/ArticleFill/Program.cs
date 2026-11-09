@@ -6,54 +6,68 @@ using StackExchange.Redis;
 // latest 14 days of articles from the database into Redis. This is the key
 // difference from the CommentCache: the cache is pre-populated here, so the
 // service never writes to it (a read of a non-cached article falls through to DB).
+//
+// Since the article database is sharded on the z-axis, the fill reads EVERY shard
+// and writes each article into the single (global) Redis cache under its globally
+// unique id.
 
 var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "redis://localhost:6379";
-var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL") ?? "Host=localhost;Port=5432;Database=articles;Username=hh;Password=hh";
 var intervalMs = int.Parse(Environment.GetEnvironmentVariable("FILL_INTERVAL_MS") ?? "30000");
 
+var shardNames = (Environment.GetEnvironmentVariable("SHARD_NAMES") ?? "article-db-1,article-db-2")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var connTemplate = Environment.GetEnvironmentVariable("SHARD_CONN_TEMPLATE")
+    ?? "Host={0};Port=5432;Database=articles;Username=hh;Password=hh";
+
 var redis = await ConnectWithRetryAsync(redisUrl, "redis");
-await using var dataSource = NpgsqlDataSource.Create(databaseUrl);
-await WithRetryAsync(async () =>
+var dataSources = new List<NpgsqlDataSource>();
+foreach (var name in shardNames)
 {
-    await using var cmd = dataSource.CreateCommand("SELECT 1");
-    await cmd.ExecuteScalarAsync();
-}, "postgres");
+    var source = NpgsqlDataSource.Create(string.Format(connTemplate, name));
+    dataSources.Add(source);
+    await WithRetryAsync(async () =>
+    {
+        await using var cmd = source.CreateCommand("SELECT 1");
+        await cmd.ExecuteScalarAsync();
+    }, $"postgres ({name})");
+}
 
 var db = redis.GetDatabase();
-await FillAsync(db, dataSource);
+await FillAsync(db, dataSources);
 
 using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
 while (await timer.WaitForNextTickAsync())
 {
-    await FillAsync(db, dataSource);
+    await FillAsync(db, dataSources);
 }
 
-static async Task<int> FillAsync(IDatabase db, NpgsqlDataSource dataSource)
+static async Task<int> FillAsync(IDatabase db, List<NpgsqlDataSource> dataSources)
 {
-    await using var cmd = dataSource.CreateCommand(
-        "SELECT id, title, content, published_at FROM articles " +
-        "WHERE published_at >= NOW() - interval '14 days' " +
-        "ORDER BY published_at DESC");
-    await using var reader = await cmd.ExecuteReaderAsync();
-
-    var articles = new List<Article>();
-    while (await reader.ReadAsync())
-    {
-        articles.Add(new Article(
-            reader.GetInt32(0),
-            reader.GetString(1),
-            reader.GetString(2),
-            reader.GetFieldValue<DateTimeOffset>(3)));
-    }
-
     var json = JsonDefaults.Web;
-    foreach (var a in articles)
+    var written = 0;
+
+    foreach (var dataSource in dataSources)
     {
-        await db.StringSetAsync($"article:{a.Id}", JsonSerializer.Serialize(a, json));
+        await using var cmd = dataSource.CreateCommand(
+            "SELECT id, title, content, published_at FROM articles " +
+            "WHERE published_at >= NOW() - interval '14 days' " +
+            "ORDER BY published_at DESC");
+        await using var reader = await cmd.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            var article = new Article(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetFieldValue<DateTimeOffset>(3));
+            await db.StringSetAsync($"article:{article.Id}", JsonSerializer.Serialize(article, json));
+            written++;
+        }
     }
 
-    Console.WriteLine($"[fill] cached {articles.Count} articles from the last 14 days");
-    return articles.Count;
+    Console.WriteLine($"[fill] cached {written} articles from the last 14 days across {dataSources.Count} shard(s)");
+    return written;
 }
 
 static async Task<ConnectionMultiplexer> ConnectWithRetryAsync(string url, string label, int tries = 40)

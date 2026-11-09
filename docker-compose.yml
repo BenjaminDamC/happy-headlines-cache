@@ -1,12 +1,14 @@
 # HappyHeadlines — cache layers between the region-replicated services and the
-# distant global databases. DLS Compulsory Assignment #1 (W40).
+# distant global databases. DLS Compulsory Assignment #2 (W46).
 #
-# Ported to C# / .NET 9: the services are ASP.NET Core minimal APIs and the
-# offline fill is a .NET console worker (both talk Redis + PostgreSQL).
+# C# / .NET 9: the services are ASP.NET Core minimal APIs and the offline fill is
+# a .NET console worker. Includes the W44 subscriber/newsletter swimlanes, the W46
+# fault isolation (ProfanityService + circuit breaker) and the scale-cube scaling
+# (z-axis article sharding + x-axis load balancing).
 
 services:
-  # --- Global databases (in North America; NOT replicated to regions) ---
-  article-db:
+  # --- Article databases — scaled on the Z-AXIS (sharded by article id) ---
+  article-db-1:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: articles
@@ -15,6 +17,16 @@ services:
     ports: ["5433:5432"]
     volumes:
       - ./db/init-article.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  article-db-2:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: articles
+      POSTGRES_USER: hh
+      POSTGRES_PASSWORD: hh
+    ports: ["5436:5432"]
+    volumes:
+      - ./db/init-article-2.sql:/docker-entrypoint-initdb.d/init.sql:ro
 
   comment-db:
     image: postgres:16-alpine
@@ -40,29 +52,60 @@ services:
     build: ./dashboard
     ports: ["4003:80"]
 
-  # --- Services (replicated per region; talk to the distant DBs via the caches) ---
+  # --- Z-axis coordination component: routes an article id to its shard ---
+  article-coordinator:
+    build:
+      context: .
+      dockerfile: server/article-coordinator/Dockerfile
+    ports: ["4007:4007"]
+    environment:
+      SHARD_NAMES: article-db-1,article-db-2
+      SHARD_CONN_TEMPLATE: "Host={0};Port=5432;Database=articles;Username=hh;Password=hh"
+
+  # --- ArticleService replicas — scaled on the X-AXIS behind the article-lb ---
   article-service:
     build:
       context: .
       dockerfile: server/article-service/Dockerfile
     ports: ["4001:4001"]
-    depends_on: [article-cache, article-db]
+    depends_on: [article-cache, article-db-1, article-db-2, article-coordinator]
     environment:
       REDIS_URL: redis://article-cache:6379
-      DATABASE_URL: "Host=article-db;Port=5432;Database=articles;Username=hh;Password=hh"
+      COORDINATOR_URL: http://article-coordinator:4007
+
+  # Identical replica — same image, same config. The article-lb round-robins
+  # between this and article-service (x-axis horizontal scaling).
+  article-service-2:
+    build:
+      context: .
+      dockerfile: server/article-service/Dockerfile
+    ports: ["4008:4001"]
+    depends_on: [article-cache, article-db-1, article-db-2, article-coordinator]
+    environment:
+      REDIS_URL: redis://article-cache:6379
+      COORDINATOR_URL: http://article-coordinator:4007
+
+  # The x-axis load balancer: single entry point in front of the replicas.
+  article-lb:
+    image: nginx:alpine
+    ports: ["4000:80"]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [article-service, article-service-2]
 
   # The ArticleCache OFFLINE fill process — periodically copies the latest
-  # 14 days of articles into Redis. Runs independently of the service.
+  # 14 days of articles (from ALL shards) into Redis. Runs independently.
   article-fill:
     build:
       context: .
       dockerfile: server/article-service/Dockerfile
     command: ["dotnet", "/app/fill/ArticleFill.dll"]
-    depends_on: [article-cache, article-db]
+    depends_on: [article-cache, article-db-1, article-db-2]
     environment:
       REDIS_URL: redis://article-cache:6379
-      DATABASE_URL: "Host=article-db;Port=5432;Database=articles;Username=hh;Password=hh"
       FILL_INTERVAL_MS: 30000
+      SHARD_NAMES: article-db-1,article-db-2
+      SHARD_CONN_TEMPLATE: "Host={0};Port=5432;Database=articles;Username=hh;Password=hh"
 
   comment-service:
     build:
@@ -76,7 +119,7 @@ services:
       PROFANITY_URL: http://profanity-service:4006
 
   # ProfanityService — screens comment text. Its own swimlane: the CommentService
-  # calls it over HTTP through a circuit breaker (see W46 fault isolation).
+  # calls it over HTTP through a circuit breaker (W46 fault isolation).
   profanity-service:
     build:
       context: .
