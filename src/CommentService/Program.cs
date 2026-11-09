@@ -1,5 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Npgsql;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using StackExchange.Redis;
 
 // CommentService — cache-miss with LRU eviction.
@@ -18,15 +23,30 @@ const string LruKey = "commentcache:lru";
 var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL") ?? "redis://localhost:6379";
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL") ?? "Host=localhost;Port=5432;Database=comments;Username=hh;Password=hh";
 var profanityUrl = Environment.GetEnvironmentVariable("PROFANITY_URL") ?? "http://profanity-service:4006";
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
 
 // Cache hit-ratio counters (in-memory; reset on restart).
 long cacheHits = 0;
 long cacheMisses = 0;
+long requestCount = 0;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:4002");
 builder.Services.AddCors();
 builder.Services.AddHttpClient("profanity", c => c.BaseAddress = new Uri(profanityUrl));
+
+// Monitoring — distributed tracing exported to Jaeger over OTLP/HTTP.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("comment-service"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter(o =>
+        {
+            o.Protocol = OtlpExportProtocol.HttpProtobuf;
+            o.Endpoint = new Uri(otlpEndpoint);
+        }));
+
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -35,6 +55,19 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 app.UseCors(p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+
+// Structured request log + counter, correlated to the active trace id.
+app.Use(async (ctx, next) =>
+{
+    Interlocked.Increment(ref requestCount);
+    var sw = Stopwatch.StartNew();
+    await next();
+    sw.Stop();
+    var traceId = Activity.Current?.TraceId.ToString() ?? "n/a";
+    Console.WriteLine(
+        $"{{\"service\":\"comment-service\",\"traceId\":\"{traceId}\",\"method\":\"{ctx.Request.Method}\"," +
+        $"\"path\":\"{ctx.Request.Path}\",\"status\":{ctx.Response.StatusCode},\"durationMs\":{sw.ElapsedMilliseconds}}}");
+});
 
 var redis = await ConnectWithRetryAsync(redisUrl, "redis");
 await using var dataSource = NpgsqlDataSource.Create(databaseUrl);
@@ -68,6 +101,29 @@ app.MapGet("/cache/hit-ratio", () =>
     var total = hits + misses;
     var hitRatio = total == 0 ? 0.0 : (double)hits / total;
     return Results.Ok(new { service = "comment-service", hits, misses, total, hitRatio });
+});
+
+// Prometheus metrics (text exposition) — scraped by the Prometheus container.
+app.MapGet("/metrics", () =>
+{
+    var hits = Interlocked.Read(ref cacheHits);
+    var misses = Interlocked.Read(ref cacheMisses);
+    var requests = Interlocked.Read(ref requestCount);
+    var breakerState = breaker.State switch { "closed" => 0, "open" => 1, _ => 2 };
+    return Results.Text(
+        "# HELP happyheadlines_http_requests_total Total HTTP requests served.\n" +
+        "# TYPE happyheadlines_http_requests_total counter\n" +
+        $"happyheadlines_http_requests_total{{service=\"comment-service\"}} {requests}\n" +
+        "# HELP happyheadlines_cache_hits_total Cache reads served from Redis.\n" +
+        "# TYPE happyheadlines_cache_hits_total counter\n" +
+        $"happyheadlines_cache_hits_total{{service=\"comment-service\"}} {hits}\n" +
+        "# HELP happyheadlines_cache_misses_total Cache reads that fell through to the database.\n" +
+        "# TYPE happyheadlines_cache_misses_total counter\n" +
+        $"happyheadlines_cache_misses_total{{service=\"comment-service\"}} {misses}\n" +
+        "# HELP happyheadlines_circuit_breaker_state 0=closed, 1=open, 2=half-open.\n" +
+        "# TYPE happyheadlines_circuit_breaker_state gauge\n" +
+        $"happyheadlines_circuit_breaker_state{{service=\"comment-service\"}} {breakerState}\n",
+        "text/plain; version=0.0.4");
 });
 
 app.MapGet("/articles/{articleId:int}/comments", async (int articleId) =>

@@ -1,0 +1,19 @@
+# Prometheus scrape configuration for HappyHeadlines.
+# Each .NET service exposes a hand-rolled /metrics endpoint in the Prometheus
+# text format (request counts, cache hits/misses, circuit-breaker state).
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'article-service'
+    static_configs:
+      - targets: ['article-service:4001', 'article-service-2:4001']
+  - job_name: 'article-coordinator'
+    static_configs:
+      - targets: ['article-coordinator:4007']
+  - job_name: 'comment-service'
+    static_configs:
+      - targets: ['comment-service:4002']
+  - job_name: 'profanity-service'
+    static_configs:
+      - targets: ['profanity-service:4006']

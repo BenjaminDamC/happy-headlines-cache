@@ -1,4 +1,9 @@
+using System.Diagnostics;
 using System.Text.Json;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 // ProfanityService — screens comment text against a small profanity word list.
 //
@@ -6,6 +11,10 @@ using System.Text.Json;
 // service is unavailable, the CommentService's circuit breaker isolates the
 // failure and the CommentService keeps working (comments are accepted but left
 // unmoderated) instead of cascading the outage.
+
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTLP_ENDPOINT") ?? "http://jaeger:4318";
+
+long requestCount = 0;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:4006");
@@ -15,7 +24,32 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNameCaseInsensitive = true;
 });
 
+// Monitoring — distributed tracing exported to Jaeger over OTLP/HTTP.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService("profanity-service"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter(o =>
+        {
+            o.Protocol = OtlpExportProtocol.HttpProtobuf;
+            o.Endpoint = new Uri(otlpEndpoint);
+        }));
+
 var app = builder.Build();
+
+// Structured request log + counter, correlated to the active trace id.
+app.Use(async (ctx, next) =>
+{
+    Interlocked.Increment(ref requestCount);
+    var sw = Stopwatch.StartNew();
+    await next();
+    sw.Stop();
+    var traceId = Activity.Current?.TraceId.ToString() ?? "n/a";
+    Console.WriteLine(
+        $"{{\"service\":\"profanity-service\",\"traceId\":\"{traceId}\",\"method\":\"{ctx.Request.Method}\"," +
+        $"\"path\":\"{ctx.Request.Path}\",\"status\":{ctx.Response.StatusCode},\"durationMs\":{sw.ElapsedMilliseconds}}}");
+});
 
 var profanities = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
 {
@@ -39,6 +73,16 @@ app.MapGet("/check", (string text) =>
         .ToArray();
 
     return Results.Ok(new { flagged = matches.Length > 0, matches });
+});
+
+app.MapGet("/metrics", () =>
+{
+    var requests = Interlocked.Read(ref requestCount);
+    return Results.Text(
+        "# HELP happyheadlines_http_requests_total Total HTTP requests served.\n" +
+        "# TYPE happyheadlines_http_requests_total counter\n" +
+        $"happyheadlines_http_requests_total{{service=\"profanity-service\"}} {requests}\n",
+        "text/plain; version=0.0.4");
 });
 
 app.Run();
