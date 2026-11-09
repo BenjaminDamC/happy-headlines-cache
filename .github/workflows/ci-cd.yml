@@ -24,9 +24,15 @@ jobs:
           - image: article-service
             context: .
             dockerfile: server/article-service/Dockerfile
+          - image: article-coordinator
+            context: .
+            dockerfile: server/article-coordinator/Dockerfile
           - image: comment-service
             context: .
             dockerfile: server/comment-service/Dockerfile
+          - image: profanity-service
+            context: .
+            dockerfile: server/profanity-service/Dockerfile
           - image: subscriber-service
             context: .
             dockerfile: server/subscriber-service/Dockerfile
